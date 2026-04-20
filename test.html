@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>API Test</title>
+</head>
+<body>
+    <h1>API Test</h1>
+    <p id="status">Testing...</p>
+    
+    <script>
+        const statusEl = document.getElementById('status');
+        
+        console.log('🚀 Starting API test...');
+        
+        fetch('http://localhost:3001/api/state')
+            .then(r => {
+                console.log('✅ Response:', r.status);
+                statusEl.innerHTML = `<span style="color: green;">✅ API ist erreichbar! Status: ${r.status}</span>`;
+                return r.json();
+            })
+            .then(data => {
+                console.log('✅ Data:', data);
+                statusEl.innerHTML += `<pre>${JSON.stringify(data, null, 2).substring(0, 500)}...</pre>`;
+            })
+            .catch(err => {
+                console.error('❌ Error:', err);
+                statusEl.innerHTML = `<span style="color: red;">❌ Error: ${err.message}</span>`;
+            });
+    </script>
+</body>
+</html>

@@ -5,13 +5,18 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: '0.0.0.0',
+    port: 5176,
     proxy: {
       '/api': {
-        target: process.env.VITE_API_URL || 'http://127.0.0.1:3001',
+        target: 'http://127.0.0.1:3001',
         changeOrigin: true,
         rewrite: (path) => path,
+        ws: true,
       },
-      '/uploads': 'http://127.0.0.1:3001',
+      '/uploads': {
+        target: 'http://127.0.0.1:3001',
+        changeOrigin: true,
+      },
     },
   },
 })

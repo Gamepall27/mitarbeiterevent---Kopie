@@ -1,3 +1,10 @@
+// Use relative /api path for Vite proxy in dev, absolute URL in production
+const API_BASE = import.meta.env.PROD 
+  ? (import.meta.env.VITE_API_URL || 'http://127.0.0.1:3001')
+  : '/api'
+
+console.log('🔗 API Base:', API_BASE, 'PROD:', import.meta.env.PROD)
+
 function buildHeaders({ adminCode, teamSession } = {}, contentType = 'application/json') {
   return {
     ...(contentType ? { 'Content-Type': contentType } : {}),
@@ -18,7 +25,7 @@ async function parseResponse(response) {
 }
 
 export async function fetchAppState(adminCode, teamSession) {
-  const response = await fetch('/api/state', {
+  const response = await fetch(`${API_BASE}/api/state`, {
     headers: buildHeaders({ adminCode, teamSession }, null),
   })
 
@@ -26,7 +33,7 @@ export async function fetchAppState(adminCode, teamSession) {
 }
 
 export async function loginAdmin(code) {
-  const response = await fetch('/api/admin/login', {
+  const response = await fetch(`${API_BASE}/admin/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code }),
@@ -36,7 +43,7 @@ export async function loginAdmin(code) {
 }
 
 export async function loginWithCode(payload) {
-  const response = await fetch('/api/access/login', {
+  const response = await fetch(`${API_BASE}/access/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -46,7 +53,8 @@ export async function loginWithCode(payload) {
 }
 
 export async function postJson(url, body, adminCode, teamSession) {
-  const response = await fetch(url, {
+  const fullUrl = url.startsWith('http') ? url : `${API_BASE}${url.replace(/^\/api/, '')}`
+  const response = await fetch(fullUrl, {
     method: 'POST',
     headers: buildHeaders({ adminCode, teamSession }),
     body: JSON.stringify(body),
@@ -56,7 +64,8 @@ export async function postJson(url, body, adminCode, teamSession) {
 }
 
 export async function postMultipart(url, body, adminCode, teamSession) {
-  const response = await fetch(url, {
+  const fullUrl = url.startsWith('http') ? url : `${API_BASE}${url.replace(/^\/api/, '')}`
+  const response = await fetch(fullUrl, {
     method: 'POST',
     headers: buildHeaders({ adminCode, teamSession }, null),
     body,
@@ -66,7 +75,7 @@ export async function postMultipart(url, body, adminCode, teamSession) {
 }
 
 export async function fetchApprovals(adminCode) {
-  const response = await fetch('/api/admin/approvals', {
+  const response = await fetch(`${API_BASE}/admin/approvals`, {
     headers: { 'x-admin-code': adminCode },
   })
 

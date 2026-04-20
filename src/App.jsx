@@ -129,8 +129,9 @@ function App() {
 
       setAppState(payload.appState)
     } catch (error) {
+      console.error('❌ Error loading state:', error.message, error)
       if (!silent) {
-        setStationFeedback(error.message)
+        setStationFeedback(`⚠️ Fehler: ${error.message}`)
       }
     } finally {
       if (!silent) {
