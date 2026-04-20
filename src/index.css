@@ -1,0 +1,98 @@
+:root {
+  --bg: #edf2ef;
+  --panel-bg: rgba(250, 251, 248, 0.78);
+  --border: rgba(19, 45, 54, 0.12);
+  --ink: #2d4b57;
+  --ink-strong: #132d36;
+  --muted: #61757e;
+  --accent: #247899;
+  --shadow-soft: 0 18px 55px rgba(19, 45, 54, 0.12);
+  --shadow-accent: 0 14px 30px rgba(36, 120, 153, 0.24);
+  --sans: 'Aptos', 'Trebuchet MS', sans-serif;
+  --heading: 'Aptos Display', 'Bahnschrift', sans-serif;
+  --mono: 'Consolas', 'Courier New', monospace;
+
+  color: var(--ink);
+  background:
+    radial-gradient(circle at top left, rgba(255, 130, 61, 0.2), transparent 28%),
+    radial-gradient(circle at bottom right, rgba(36, 120, 153, 0.22), transparent 26%),
+    linear-gradient(180deg, #f6f2ea, #edf2ef 45%, #e4ece8);
+  font: 16px/1.5 var(--sans);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(rgba(19, 45, 54, 0.03), rgba(19, 45, 54, 0.03)),
+    linear-gradient(90deg, rgba(19, 45, 54, 0.02) 1px, transparent 1px),
+    linear-gradient(rgba(19, 45, 54, 0.02) 1px, transparent 1px);
+  background-size: auto, 28px 28px, 28px 28px;
+  mask-image: radial-gradient(circle at center, black 50%, transparent 92%);
+}
+
+#root {
+  width: min(1280px, 100%);
+  margin: 0 auto;
+  min-height: 100svh;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  color: var(--ink-strong);
+  font-family: var(--heading);
+  font-weight: 600;
+  line-height: 1.08;
+}
+
+h1 {
+  font-size: clamp(2.8rem, 5vw, 4.9rem);
+  letter-spacing: -0.05em;
+}
+
+h2 {
+  font-size: clamp(1.5rem, 3.4vw, 2.35rem);
+  letter-spacing: -0.04em;
+}
+
+h3 {
+  font-size: clamp(1.15rem, 2vw, 1.45rem);
+  letter-spacing: -0.03em;
+}
+
+p {
+  margin: 0;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid rgba(36, 120, 153, 0.25);
+  outline-offset: 2px;
+}

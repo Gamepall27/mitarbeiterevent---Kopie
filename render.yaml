@@ -1,0 +1,17 @@
+# Render Deployment Configuration
+# Kostenlos auf render.com deployen
+
+services:
+  - type: web
+    name: mitarbeiterevent-api
+    runtime: node
+    region: frankfurt
+    startCommand: npm run prod
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+    buildCommand: npm install && npm run build
+    autoDeploy: true
+
