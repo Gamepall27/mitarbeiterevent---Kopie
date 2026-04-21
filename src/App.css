@@ -668,6 +668,20 @@
   border-radius: 22px;
   border: 1px solid rgba(19, 45, 54, 0.1);
   background: rgba(255, 255, 255, 0.72);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.mission-card:hover {
+  border-color: rgba(36, 120, 153, 0.2);
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 2px 8px rgba(36, 120, 153, 0.1);
+}
+
+.mission-card.active {
+  border-color: rgba(36, 120, 153, 0.36);
+  background: rgba(36, 120, 153, 0.04);
+  box-shadow: inset 0 0 0 1px rgba(36, 120, 153, 0.12);
 }
 
 .mission-card__stats {

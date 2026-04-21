@@ -33,6 +33,7 @@ function AdminView({
   onStartEvent,
 }) {
   const [tab, setTab] = useState('overview')
+  const [selectedAnalysisStationId, setSelectedAnalysisStationId] = useState(null)
   const [timerDraft, setTimerDraft] = useState(String(eventDurationMinutes))
   const [hintImage, setHintImage] = useState(null)
   const [hintImageName, setHintImageName] = useState('')
@@ -733,19 +734,41 @@ function AdminView({
                   className="ghost-button"
                   onClick={() => {
                     if (!hintContentDraft) return
-                    const newHint = {
-                      id: crypto.randomUUID?.() || Math.random().toString(36).substr(2, 9),
-                      type: hintTypeDraft,
-                      content: hintTypeDraft === 'text' ? hintContentDraft : hintContentDraft.name,
-                      cost: Number(hintCostDraft),
+                    
+                    // For image hints, we need to read the file as a data URL
+                    if (hintTypeDraft === 'image' && hintContentDraft instanceof File) {
+                      const reader = new FileReader()
+                      reader.onload = (event) => {
+                        const newHint = {
+                          id: crypto.randomUUID?.() || Math.random().toString(36).substr(2, 9),
+                          type: hintTypeDraft,
+                          content: event.target.result, // Data URL for image
+                          cost: Number(hintCostDraft),
+                        }
+                        setStationDraft((current) => ({
+                          ...current,
+                          hints: [...(current.hints || []), newHint],
+                        }))
+                        setHintContentDraft('')
+                        setHintCostDraft('5')
+                        setHintTypeDraft('text')
+                      }
+                      reader.readAsDataURL(hintContentDraft)
+                    } else {
+                      const newHint = {
+                        id: crypto.randomUUID?.() || Math.random().toString(36).substr(2, 9),
+                        type: hintTypeDraft,
+                        content: hintTypeDraft === 'text' ? hintContentDraft : hintContentDraft.name,
+                        cost: Number(hintCostDraft),
+                      }
+                      setStationDraft((current) => ({
+                        ...current,
+                        hints: [...(current.hints || []), newHint],
+                      }))
+                      setHintContentDraft('')
+                      setHintCostDraft('5')
+                      setHintTypeDraft('text')
                     }
-                    setStationDraft((current) => ({
-                      ...current,
-                      hints: [...(current.hints || []), newHint],
-                    }))
-                    setHintContentDraft('')
-                    setHintCostDraft('5')
-                    setHintTypeDraft('text')
                   }}
                   type="button"
                 >
@@ -801,23 +824,104 @@ function AdminView({
             <div className="mission-metrics">
               {stations.map((station) => {
                 const analytics = getStationAnalytics(teams, station.id)
+                const isSelected = selectedAnalysisStationId === station.id
 
                 return (
-                  <div className="mission-card" key={station.id}>
-                    <div className="mission-card__top">
-                      <strong>{station.name}</strong>
-                      <span className={`status-pill ${station.mandatory ? 'open' : 'bonus'}`}>
-                        {station.mandatory ? 'Pflicht' : 'Bonus'}
-                      </span>
-                    </div>
-                    <p>
-                      {station.format} - {station.zone}
-                    </p>
-                    <div className="mission-card__stats">
-                      <span>{analytics.solved} geloest</span>
-                      <span>{analytics.pending} pending</span>
-                      <span>{analytics.wrongAttempts} Fehler</span>
-                    </div>
+                  <div key={station.id}>
+                    <button
+                      className={`mission-card ${isSelected ? 'active' : ''}`}
+                      onClick={() => {
+                        if (isSelected) {
+                          setSelectedAnalysisStationId(null)
+                        } else {
+                          setSelectedAnalysisStationId(station.id)
+                        }
+                      }}
+                      type="button"
+                      style={{ width: '100%', textAlign: 'left', border: 'none', background: 'none', cursor: 'pointer' }}
+                    >
+                      <div className="mission-card__top">
+                        <strong>{station.name}</strong>
+                        <span className={`status-pill ${station.mandatory ? 'open' : 'bonus'}`}>
+                          {station.mandatory ? 'Pflicht' : 'Bonus'}
+                        </span>
+                      </div>
+                      <p>
+                        {station.format} - {station.zone}
+                      </p>
+                      <div className="mission-card__stats">
+                        <span>{analytics.solved} geloest</span>
+                        <span>{analytics.pending} pending</span>
+                        <span>{analytics.wrongAttempts} Fehler</span>
+                      </div>
+                    </button>
+
+                    {isSelected ? (
+                      <div className="card stack" style={{ marginTop: '12px' }}>
+                        <div className="task-panel">
+                          <div className="task-meta">
+                            <span>{station.zone}</span>
+                            <span>{station.format}</span>
+                            <span>{station.mandatory ? 'Pflicht' : 'Bonus'}</span>
+                            <span>{station.points} Punkte</span>
+                          </div>
+
+                          {station.imageUrl ? (
+                            <div className="task-visual">
+                              <img alt={station.imageName || station.name} src={station.imageUrl} />
+                            </div>
+                          ) : null}
+
+                          <p className="section-copy">{station.locationHint}</p>
+                          <p><strong>Aufgabe:</strong></p>
+                          <p>{station.task}</p>
+
+                          {station.type === 'choice' && station.choices ? (
+                            <div style={{ marginTop: '12px' }}>
+                              <p><strong>Antwortoptionen:</strong></p>
+                              <ul style={{ marginLeft: '20px' }}>
+                                {station.choices.map((choice) => (
+                                  <li key={choice.id}>{choice.label}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          ) : null}
+
+                          {station.answer ? (
+                            <div style={{ marginTop: '12px', padding: '12px', background: 'rgba(36, 120, 153, 0.08)', borderRadius: '12px' }}>
+                              <p><strong>Loesung:</strong></p>
+                              <p>{station.answer}</p>
+                            </div>
+                          ) : null}
+
+                          {station.hints && station.hints.length > 0 ? (
+                            <div style={{ marginTop: '16px' }}>
+                              <p><strong>Verfuegbare Hinweise:</strong></p>
+                              <div className="hints-list" style={{ marginTop: '8px' }}>
+                                {station.hints.map((hint) => (
+                                  <div className="hint-card" key={hint.id}>
+                                    <div>
+                                      <p className="hint-label">{hint.type === 'text' ? '📝 Text' : '🖼️ Bild'}</p>
+                                      {hint.type === 'text' ? (
+                                        <p className="hint-preview">{hint.content}</p>
+                                      ) : null}
+                                      <p className="hint-cost">Kosten: {hint.cost} Punkte</p>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+
+                          <div style={{ marginTop: '16px', padding: '12px', background: 'rgba(255, 255, 255, 0.72)', borderRadius: '12px', border: '1px solid rgba(19, 45, 54, 0.1)' }}>
+                            <p><strong>Analyse:</strong></p>
+                            <p>Geloest: {analytics.solved} Teams</p>
+                            <p>Pending: {analytics.pending} Teams</p>
+                            <p>Fehlerhafte Versuche: {analytics.wrongAttempts}</p>
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 )
               })}
