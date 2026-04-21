@@ -656,10 +656,10 @@ function AdminView({
 
                 {stationDraft.hints?.length > 0 ? (
                   <div className="task-list">
-                    {stationDraft.hints.map((hint) => (
+                    {stationDraft.hints.map((hint, index) => (
                       <div className="task-row" key={hint.id}>
                         <div>
-                          <strong>{hint.type === 'text' ? 'Text' : 'Bild'}: {hint.content?.substring(0, 40)}...</strong>
+                          <strong>Hinweis Stufe {index + 1}: {hint.content?.substring(0, 40)}...</strong>
                           <p className="hint-text">{hint.cost} Punkte</p>
                         </div>
                         <button
@@ -898,10 +898,10 @@ function AdminView({
                             <div style={{ marginTop: '16px' }}>
                               <p><strong>Verfuegbare Hinweise:</strong></p>
                               <div className="hints-list" style={{ marginTop: '8px' }}>
-                                {station.hints.map((hint) => (
+                                {station.hints.map((hint, index) => (
                                   <div className="hint-card" key={hint.id}>
                                     <div>
-                                      <p className="hint-label">{hint.type === 'text' ? '📝 Text' : '🖼️ Bild'}</p>
+                                      <p className="hint-label">Hinweis Stufe {index + 1}</p>
                                       {hint.type === 'text' ? (
                                         <p className="hint-preview">{hint.content}</p>
                                       ) : null}

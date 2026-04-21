@@ -402,7 +402,6 @@ function StationDetail({ station, team, teamReady, onSubmit, onUnlock, onBuyHint
         <div className="card stack simple-focus">
           <div className="section-head compact">
             <p className="eyebrow">Verfuegbare Hinweise</p>
-            <h4>Kostenlose oder kostenpflichtige Unterstuetzung</h4>
           </div>
           <div className="hints-list">
             {station.hints.map((hint, index) => {
@@ -414,7 +413,7 @@ function StationDetail({ station, team, teamReady, onSubmit, onUnlock, onBuyHint
               return (
                 <div className="hint-card" key={hint.id}>
                   <div style={{ width: '100%' }}>
-                    <p className="hint-label">{hint.type === 'text' ? '📝 Text' : '🖼️ Bild'}</p>
+                    <p className="hint-label">Hinweis Stufe {index + 1}</p>
                     {isAlreadyBought ? (
                       hint.type === 'text' ? (
                         <p className="hint-preview">{hint.content}</p>
