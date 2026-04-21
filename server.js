@@ -41,19 +41,6 @@ db.exec(`
 const upload = multer({ dest: uploadsDir })
 const app = express()
 
-// CORS & JSON Middleware with Logging
-app.use((req, res, next) => {
-  console.log(`📨 ${req.method} ${req.path}`)
-  res.header('Access-Control-Allow-Origin', '*')
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE')
-  res.header('Access-Control-Allow-Headers', 'Content-Type, x-admin-code, x-team-id, x-team-session')
-  if (req.method === 'OPTIONS') {
-    res.sendStatus(200)
-    return
-  }
-  next()
-})
-
 app.use(express.json({ limit: '10mb' }))
 app.use('/uploads', express.static(uploadsDir))
 
@@ -667,16 +654,6 @@ app.post('/api/admin/reset', requireAdmin, (_request, response) => {
 const port = Number(globalThis.process?.env?.PORT ?? 3001)
 app.listen(port, '0.0.0.0', () => {
   console.log(`API server listening on http://0.0.0.0:${port}`)
-})
-
-// Error Handler
-process.on('uncaughtException', (error) => {
-  console.error('❌ Uncaught Exception:', error)
-  process.exit(1)
-})
-
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason)
 })
 
 function initializeState() {
