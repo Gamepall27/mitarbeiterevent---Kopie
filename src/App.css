@@ -395,6 +395,68 @@
   box-shadow: inset 0 0 0 1px rgba(36, 120, 153, 0.12);
 }
 
+/* Accordion Styles */
+.station-accordion {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.accordion-item {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(19, 45, 54, 0.1);
+  border-radius: 22px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+.accordion-item:last-child {
+  margin-bottom: 0;
+}
+
+.accordion-header {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.74);
+  padding: 16px;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  border: none;
+  transition: background-color 0.2s ease;
+}
+
+.accordion-header:hover {
+  background: rgba(255, 255, 255, 0.88);
+}
+
+.accordion-header.active {
+  border-color: rgba(36, 120, 153, 0.36);
+  box-shadow: inset 0 0 0 1px rgba(36, 120, 153, 0.12);
+  background: rgba(36, 120, 153, 0.04);
+}
+
+.accordion-content {
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.88);
+  border-top: 1px solid rgba(19, 45, 54, 0.08);
+  animation: slideDown 0.3s ease;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .station-card p,
 .table-row span,
 .quick-team span {

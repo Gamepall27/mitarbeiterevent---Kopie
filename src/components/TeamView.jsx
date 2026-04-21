@@ -19,6 +19,8 @@ function TeamView({
   onUnlock,
   onBuyHint,
 }) {
+  const [expandedStationId, setExpandedStationId] = useState(null)
+  
   const teamReady = Boolean(eventStartedAt)
   const selectedStation =
     stations.find((station) => station.id === team.selectedStationId) ??
@@ -86,122 +88,79 @@ function TeamView({
         </div>
       ) : null}
 
-      <div className="simple-dashboard">
-        <div className="card stack simple-focus">
-          <div className="section-head compact">
-            <div>
-              <p className="eyebrow">Aktuelle Aufgabe</p>
-              <h3>{selectedStation.name}</h3>
-            </div>
-            <span
-              className={`status-pill ${getVisualStatus(
-                selectedProgress,
-                selectedStation,
-              )}`}
-            >
-              {getStatusLabel(getVisualStatus(selectedProgress, selectedStation))}
-            </span>
-          </div>
-
-          <StationDetail
-            key={`${team.id}-${selectedStation.id}-${selectedProgress.status}-${selectedProgress.answer}-${selectedProgress.assetName}-${selectedProgress.unlocked}-${teamReady}`}
-            station={selectedStation}
-            team={team}
-            teamReady={teamReady}
-            onSubmit={onSubmitStation}
-            onUnlock={onUnlock}
-            onBuyHint={onBuyHint}
-          />
-        </div>
-
-        <div className="card stack simple-sidebar">
-          <div className="simple-progress">
-            <Metric label="Punkte" value={team.metrics.points} />
-            <Metric
-              label="Pflichtaufgaben"
-              value={`${team.metrics.mandatorySolved}/${team.metrics.mandatoryTotal}`}
-            />
-            <Metric
-              label="Gesamt geloest"
-              value={`${team.metrics.solvedCount}/${stations.length}`}
-            />
-          </div>
-
-          {teamReady ? (
-            <QuickUnlockCard
-              currentStationId={selectedStation.id}
-              onUnlock={onUnlock}
-              teamId={team.id}
-            />
-          ) : null}
-
-          {team.metrics.pendingCount ? (
-            <div className="review-note">
-              <strong>In Pruefung</strong>
-              <p>
-                {team.metrics.pendingCount}{' '}
-                {team.metrics.pendingCount === 1
-                  ? 'Aufgabe wartet auf Freigabe.'
-                  : 'Aufgaben warten auf Freigabe.'}
-              </p>
-            </div>
-          ) : null}
-
-          {latestHint ? (
-            <div className="review-note">
-              <strong>Hinweis vom Admin-Team</strong>
-              <p>{latestHint.text}</p>
-            </div>
-          ) : null}
-
-          {team.metrics.fragments.length ? (
-            <div className="reward-panel">
-              <strong>Gesammelte Fragmente</strong>
-              <p>{team.metrics.fragments.map((fragment) => fragment.fragment).join(' - ')}</p>
-            </div>
-          ) : null}
-        </div>
-      </div>
-
       <div className="card stack">
         <div className="section-head compact">
           <div>
             <p className="eyebrow">Aufgaben</p>
-            <h3>Einfach Aufgabe auswaehlen</h3>
+            <h3>Aufgaben ansehen und bearbeiten</h3>
           </div>
-          <p className="hint-text">Tippt auf eine Aufgabe, um Titel und Beschreibung direkt zu sehen.</p>
+          <p className="hint-text">Klicke auf eine Aufgabe, um diese anzuzeigen und zu bearbeiten.</p>
         </div>
 
-        <div className="station-list simple-station-list">
+        <div className="station-accordion simple-station-list">
           {stations.map((station) => {
             const progress = team.stationProgress[station.id]
             const visualStatus = getVisualStatus(progress, station)
+            const isExpanded = expandedStationId === station.id
+
+            const handleToggle = () => {
+              if (isExpanded) {
+                setExpandedStationId(null)
+              } else {
+                setExpandedStationId(station.id)
+              }
+            }
 
             return (
-              <button
-                className={
-                  team.selectedStationId === station.id
-                    ? 'station-card active'
-                    : 'station-card'
-                }
-                key={station.id}
-                onClick={() => onSelectStation(team.id, station.id)}
-                type="button"
-              >
-                <div>
-                  <strong>{station.name}</strong>
-                  <p>
-                    {station.zone} · {station.mandatory ? 'Pflicht' : 'Bonus'}
-                  </p>
-                </div>
-                <span className={`status-pill ${visualStatus}`}>
-                  {getStatusLabel(visualStatus)}
-                </span>
-              </button>
+              <div key={station.id} className="accordion-item">
+                <button
+                  className={`accordion-header station-card ${isExpanded ? 'active' : ''}`}
+                  onClick={handleToggle}
+                  type="button"
+                >
+                  <div>
+                    <strong>{station.name}</strong>
+                    <p>
+                      {station.zone} · {station.mandatory ? 'Pflicht' : 'Bonus'}
+                    </p>
+                  </div>
+                  <span className={`status-pill ${visualStatus}`}>
+                    {getStatusLabel(visualStatus)}
+                  </span>
+                </button>
+
+                {isExpanded ? (
+                  <div className="accordion-content">
+                    <StationDetail
+                      key={`${team.id}-${station.id}-${progress.status}-${progress.answer}-${progress.assetName}-${progress.unlocked}-${teamReady}`}
+                      station={station}
+                      team={team}
+                      teamReady={teamReady}
+                      onSubmit={onSubmitStation}
+                      onUnlock={onUnlock}
+                      onBuyHint={onBuyHint}
+                    />
+                  </div>
+                ) : null}
+              </div>
             )
           })}
         </div>
       </div>
+
+      {team.metrics.fragments.length ? (
+        <div className="card reward-panel">
+          <strong>Gesammelte Fragmente</strong>
+          <p>{team.metrics.fragments.map((fragment) => fragment.fragment).join(' - ')}</p>
+        </div>
+      ) : null}
+
+      {latestHint ? (
+        <div className="card review-note">
+          <strong>Hinweis vom Admin-Team</strong>
+          <p>{latestHint.text}</p>
+        </div>
+      ) : null}
     </section>
   )
 }
@@ -214,32 +173,6 @@ function QuickUnlockCard({ teamId, currentStationId, onUnlock }) {
     onUnlock(teamId, currentStationId, unlockCode)
     setUnlockCode('')
   }
-
-  return (
-    <div className="review-note">
-      <strong>Naechste Aufgabe freischalten</strong>
-      <p>Nach einer geloesten Aufgabe koennt ihr hier direkt den naechsten Code eingeben.</p>
-      <form className="stack" onSubmit={handleSubmit}>
-        <label className="field">
-          <span>Freischaltcode</span>
-          <input
-            maxLength="4"
-            onChange={(event) =>
-              setUnlockCode(
-                event.target.value.replace(/[^a-zA-Z0-9]+/g, '').slice(0, 4),
-              )
-            }
-            placeholder="A1B2"
-            type="text"
-            value={unlockCode}
-          />
-        </label>
-        <button className="primary-button" disabled={unlockCode.length !== 4} type="submit">
-          Code pruefen
-        </button>
-      </form>
-    </div>
-  )
 }
 
 function StationDetail({ station, team, teamReady, onSubmit, onUnlock, onBuyHint }) {
