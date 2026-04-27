@@ -645,15 +645,17 @@
 .task-visual img {
   display: block;
   width: 100%;
-  max-height: 280px;
-  object-fit: cover;
+  max-height: 420px;
+  height: auto;
+  object-fit: contain;
 }
 
 .approval-preview img {
   display: block;
   width: 100%;
-  max-height: 320px;
-  object-fit: cover;
+  max-height: 420px;
+  height: auto;
+  object-fit: contain;
 }
 
 .toast {

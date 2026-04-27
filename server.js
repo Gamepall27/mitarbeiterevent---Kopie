@@ -730,7 +730,7 @@ app.post(
         progress.status = 'solved'
         progress.solvedAt = progress.solvedAt ?? progress.reviewedAt
         progress.pointsAwarded =
-          station.type === 'manual'
+          ['manual', 'photo'].includes(station.type)
             ? getApprovedManualPoints(request.body?.awardedPoints, station.points)
             : progress.pointsAwarded || getStationPoints(draft, request.params.stationId)
         prependActivity(team, `${stationName} freigegeben`)

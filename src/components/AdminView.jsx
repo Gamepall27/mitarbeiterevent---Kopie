@@ -980,7 +980,7 @@ function AdminView({
                     />
                   </label>
 
-                  {approval.stationType === 'manual' ? (
+                  {['manual', 'photo'].includes(approval.stationType) ? (
                     <label className="field">
                       <span>Punkte bei Freigabe</span>
                       <input
@@ -1012,7 +1012,7 @@ function AdminView({
                           approval.stationId,
                           'approve',
                           getReviewNote(approval),
-                          approval.stationType === 'manual'
+                          ['manual', 'photo'].includes(approval.stationType)
                             ? Number(getReviewPoints(approval))
                             : undefined,
                         )

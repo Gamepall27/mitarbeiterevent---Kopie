@@ -287,7 +287,37 @@ function StationDetail({
     <div className="task-panel">
       {station.imageUrl ? (
         <div className="task-visual">
-          <img alt={station.imageName || station.name} src={station.imageUrl} />
+          <button
+            className="ghost-button"
+            onClick={() => setExpandedHintImage(station.imageUrl)}
+            style={{
+              padding: 0,
+              border: 'none',
+              background: 'transparent',
+              width: '100%',
+            }}
+            type="button"
+          >
+            <img
+              alt={station.imageName || station.name}
+              onError={(event) => {
+                event.target.style.display = 'none'
+              }}
+              onMouseEnter={(event) => {
+                event.target.style.transform = 'scale(1.02)'
+                event.target.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)'
+              }}
+              onMouseLeave={(event) => {
+                event.target.style.transform = 'scale(1)'
+                event.target.style.boxShadow = 'none'
+              }}
+              src={station.imageUrl}
+              style={{
+                cursor: 'pointer',
+                transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+              }}
+            />
+          </button>
         </div>
       ) : null}
 
