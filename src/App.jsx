@@ -4,6 +4,7 @@ import {
   fetchAppState,
   loginAdmin,
   loginWithCode,
+  registerGroupWithCode,
   postJson,
   postMultipart,
 } from './api'
@@ -11,7 +12,7 @@ import AdminView from './components/AdminView'
 import TeamLogin from './components/TeamLogin'
 import TeamView from './components/TeamView'
 import { stationCatalog } from './data/mockData'
-import { getTeamMetrics } from './utils/eventModel'
+import { getEventTimerState, getTeamMetrics } from './utils/eventModel'
 
 const UI_STORAGE_KEY = 'mitarbeiterevent-ui-v2'
 const EMPTY_LIST = []
@@ -50,9 +51,6 @@ function App() {
   )
   const [adminSelectedStationId, setAdminSelectedStationId] = useState(
     storedUiState.adminSelectedStationId ?? stationCatalog[0]?.id ?? null,
-  )
-  const [hintDraft, setHintDraft] = useState(
-    'Prueft die Module in eurer Route nacheinander und haltet die Fragmente fest.',
   )
   const [codeDraft, setCodeDraft] = useState('')
   const [now, setNow] = useState(() => Date.now())
@@ -144,6 +142,19 @@ function App() {
   const stations = appState?.stations ?? EMPTY_LIST
   const teams = appState?.teams ?? EMPTY_LIST
   const eventStartedAt = appState?.eventStartedAt ?? null
+  const eventStatus = appState?.eventStatus ?? 'idle'
+  const eventPausedAt = appState?.eventPausedAt ?? null
+  const eventPausedDurationMs = appState?.eventPausedDurationMs ?? 0
+  const eventTimerState = getEventTimerState(
+    {
+      eventStartedAt,
+      eventStatus,
+      eventPausedAt,
+      eventPausedDurationMs,
+    },
+    now,
+    appState?.eventDurationMinutes,
+  )
   const teamsWithMetrics = teams.map((team) => ({
     ...team,
     metrics: getTeamMetrics(team, now, stations),
@@ -249,6 +260,10 @@ function App() {
   function handleAccess(payload) {
     applyMutation(
       async () => {
+        if (payload.mode === 'register-group') {
+          return { ...(await registerGroupWithCode(payload)), loginTarget: 'register-group' }
+        }
+
         try {
           await loginAdmin(payload.code)
           return { loginTarget: 'admin', adminCode: payload.code }
@@ -263,6 +278,11 @@ function App() {
             clearTeamSession()
             setAdminSessionCode(response.adminCode)
             setAdminUnlocked(true)
+            return
+          }
+
+          if (response.loginTarget === 'register-group') {
+            clearTeamSession()
             return
           }
 
@@ -344,27 +364,6 @@ function App() {
     )
   }
 
-  function handleAdminHint(payload) {
-    if (!adminSelectedTeam) {
-      return
-    }
-
-    const formData = new FormData()
-    formData.set('text', payload?.text ?? hintDraft)
-
-    if (payload?.hintImage instanceof File) {
-      formData.set('hintImage', payload.hintImage)
-    }
-
-    applyMutation(() =>
-      postMultipart(
-        `/api/admin/team/${adminSelectedTeam.id}/hint`,
-        formData,
-        requireAdminCode(),
-      ),
-    )
-  }
-
   function handleAdminBonus(pointsDelta) {
     if (!adminSelectedTeam) {
       return
@@ -407,6 +406,22 @@ function App() {
     applyMutation(() => postJson('/api/admin/event/start', {}, requireAdminCode()))
   }
 
+  function handleAdminPauseEvent() {
+    applyMutation(() => postJson('/api/admin/event/pause', {}, requireAdminCode()))
+  }
+
+  function handleAdminResumeEvent() {
+    applyMutation(() => postJson('/api/admin/event/resume', {}, requireAdminCode()))
+  }
+
+  function handleAdminStopEvent() {
+    applyMutation(() => postJson('/api/admin/event/stop', {}, requireAdminCode()))
+  }
+
+  function handleAdminResetEventTimer() {
+    applyMutation(() => postJson('/api/admin/event/reset', {}, requireAdminCode()))
+  }
+
   function handleAdminReview(teamId, stationId, action, reviewNote = '', awardedPoints) {
     applyMutation(() =>
       postJson(
@@ -436,10 +451,8 @@ function App() {
     })
   }
 
-  function handleCreateAccessCode(event) {
-    event.preventDefault()
-
-    applyMutation(() => postJson('/api/admin/codes', {}, requireAdminCode()), {
+  function handleCreateAccessCode(customCode = '') {
+    applyMutation(() => postJson('/api/admin/codes', { code: customCode }, requireAdminCode()), {
       onSuccess: (response) => setCodeDraft(response.code ?? ''),
     })
   }
@@ -464,6 +477,11 @@ function App() {
       }
 
       if (key === 'hints' && Array.isArray(value)) {
+        formData.set(key, JSON.stringify(value))
+        return
+      }
+
+      if (key === 'choiceOptions' && Array.isArray(value)) {
         formData.set(key, JSON.stringify(value))
         return
       }
@@ -512,18 +530,21 @@ function App() {
         <AdminView
           accessCodes={generatedCodes}
           eventDurationMinutes={appState.eventDurationMinutes}
+          eventPausedAt={eventPausedAt}
+          eventPausedDurationMs={eventPausedDurationMs}
           eventStartedAt={eventStartedAt}
+          eventStatus={eventStatus}
+          eventTimerState={eventTimerState}
           adminSelectedStation={adminSelectedStation}
           adminSelectedTeam={adminSelectedTeam}
           adminSelectedTeamId={effectiveAdminSelectedTeamId}
           codeDraft={codeDraft}
-          hintDraft={hintDraft}
+          now={now}
           onBonus={handleAdminBonus}
           onCreateCode={handleCreateAccessCode}
           onCreateStation={handleCreateStation}
           onDeleteStation={handleDeleteStation}
           onDeleteTeam={handleDeleteTeam}
-          onHint={handleAdminHint}
           onLogout={() => {
             setAdminUnlocked(false)
             setAdminSessionCode('')
@@ -531,11 +552,14 @@ function App() {
           onMarkCorrect={handleAdminMarkCorrect}
           onReset={handleResetDemo}
           onReview={handleAdminReview}
+          onPauseEvent={handleAdminPauseEvent}
+          onResetEventTimer={handleAdminResetEventTimer}
+          onResumeEvent={handleAdminResumeEvent}
           onSetEventDurationMinutes={handleAdminSetEventDurationMinutes}
           onSetAdminSelectedStation={setAdminSelectedStationId}
           onSetAdminSelectedTeam={setAdminSelectedTeamId}
-          onSetHintDraft={setHintDraft}
           onStartEvent={handleAdminStartEvent}
+          onStopEvent={handleAdminStopEvent}
           onToggleActive={handleAdminToggleActive}
           pendingApprovals={pendingApprovals}
           rankedTeams={rankedTeams}
@@ -545,7 +569,11 @@ function App() {
       ) : activeTeam ? (
         <TeamView
           eventDurationMinutes={appState.eventDurationMinutes}
+          eventPausedAt={eventPausedAt}
+          eventPausedDurationMs={eventPausedDurationMs}
           eventStartedAt={eventStartedAt}
+          eventStatus={eventStatus}
+          eventTimerState={eventTimerState}
           now={now}
           onLogout={handleTeamLogout}
           onSelectStation={handleStationSelect}

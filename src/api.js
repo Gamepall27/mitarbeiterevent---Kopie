@@ -45,6 +45,16 @@ export async function loginWithCode(payload) {
   return parseResponse(response)
 }
 
+export async function registerGroupWithCode(payload) {
+  const response = await fetch('/api/access/register-group', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+
+  return parseResponse(response)
+}
+
 export async function postJson(url, body, adminCode, teamSession) {
   const response = await fetch(url, {
     method: 'POST',

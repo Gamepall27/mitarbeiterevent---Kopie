@@ -2,7 +2,10 @@ import { useState } from 'react'
 
 import {
   formatCountdown,
+  getEventTimerState,
+  getDisplayProgressStatus,
   getStatusLabel,
+  getTeamStationOrder,
   getVisualStatus,
 } from '../utils/eventModel'
 import Metric from './Metric'
@@ -13,23 +16,30 @@ function TeamView({
   now,
   eventDurationMinutes,
   eventStartedAt,
+  eventStatus,
+  eventPausedAt,
+  eventPausedDurationMs,
+  eventTimerState,
   onLogout,
-  onSelectStation,
   onSubmitStation,
   onUnlock,
   onBuyHint,
 }) {
   const [expandedStationId, setExpandedStationId] = useState(null)
   const [expandedHintImage, setExpandedHintImage] = useState(null)
-  
+  const resolvedTimerState =
+    eventTimerState ??
+    getEventTimerState(
+      { eventStartedAt, eventStatus, eventPausedAt, eventPausedDurationMs },
+      now,
+      eventDurationMinutes,
+    )
   const teamReady = Boolean(eventStartedAt)
+  const teamCanPlay = resolvedTimerState.isInteractive
+  const orderedStations = getTeamStationOrder(stations, team.id || team.code)
   const selectedStation =
-    stations.find((station) => station.id === team.selectedStationId) ??
-    stations[0]
-  const selectedProgress = selectedStation
-    ? team.stationProgress[selectedStation.id]
-    : null
-  const latestHint = team.adminHints.at(-1) ?? null
+    orderedStations.find((station) => station.id === team.selectedStationId) ??
+    orderedStations[0]
 
   if (!selectedStation) {
     return (
@@ -62,7 +72,11 @@ function TeamView({
             label={teamReady ? 'Restzeit' : 'Status'}
             value={
               teamReady
-                ? formatCountdown({ startedAt: eventStartedAt }, now, eventDurationMinutes)
+                ? formatCountdown(
+                    { eventStartedAt, eventStatus, eventPausedAt, eventPausedDurationMs },
+                    now,
+                    eventDurationMinutes,
+                  )
                 : 'wartet auf Start'
             }
           />
@@ -100,7 +114,7 @@ function TeamView({
         </div>
 
         <div className="station-accordion simple-station-list">
-          {stations.map((station) => {
+          {orderedStations.map((station) => {
             const progress = team.stationProgress[station.id]
             const visualStatus = getVisualStatus(progress, station)
             const isExpanded = expandedStationId === station.id
@@ -123,7 +137,7 @@ function TeamView({
                   <div>
                     <strong>{station.name}</strong>
                     <p>
-                      {station.zone} · {station.mandatory ? 'Pflicht' : 'Bonus'}
+                      {getStationPointsLabel(progress, station)}
                     </p>
                   </div>
                   <span className={`status-pill ${visualStatus}`}>
@@ -138,10 +152,11 @@ function TeamView({
                       station={station}
                       team={team}
                       teamReady={teamReady}
+                      teamCanPlay={teamCanPlay}
+                      timerStatus={resolvedTimerState.status}
                       onSubmit={onSubmitStation}
                       onUnlock={onUnlock}
                       onBuyHint={onBuyHint}
-                      expandedHintImage={expandedHintImage}
                       setExpandedHintImage={setExpandedHintImage}
                     />
                   </div>
@@ -158,16 +173,8 @@ function TeamView({
           <p>{team.metrics.fragments.map((fragment) => fragment.fragment).join(' - ')}</p>
         </div>
       ) : null}
-
-      {latestHint ? (
-        <div className="card review-note">
-          <strong>Hinweis vom Admin-Team</strong>
-          <p>{latestHint.text}</p>
-        </div>
-      ) : null}
     </section>
 
-    {/* Image Modal - Full Screen */}
     {expandedHintImage ? (
       <div
         style={{
@@ -192,10 +199,10 @@ function TeamView({
             alignItems: 'center',
             justifyContent: 'center',
           }}
-          onClick={(e) => e.stopPropagation()}
+          onClick={(event) => event.stopPropagation()}
         >
           <img
-            alt="Vergrößerter Hinweis"
+            alt="Vergroesserter Hinweis"
             src={expandedHintImage}
             style={{
               maxWidth: '90vw',
@@ -224,12 +231,6 @@ function TeamView({
               transition: 'background 0.2s ease',
               zIndex: 10000,
             }}
-            onMouseEnter={(e) => {
-              e.target.style.background = 'rgba(255, 255, 255, 1)'
-            }}
-            onMouseLeave={(e) => {
-              e.target.style.background = 'rgba(255, 255, 255, 0.9)'
-            }}
           >
             ✕
           </button>
@@ -240,22 +241,35 @@ function TeamView({
   )
 }
 
-function QuickUnlockCard({ teamId, currentStationId, onUnlock }) {
-  const [unlockCode, setUnlockCode] = useState('')
+function getStationPointsLabel(progress, station) {
+  const status = getDisplayProgressStatus(progress)
 
-  function handleSubmit(event) {
-    event.preventDefault()
-    onUnlock(teamId, currentStationId, unlockCode)
-    setUnlockCode('')
+  if (status === 'solved' || status === 'pending') {
+    return `${progress.pointsAwarded ?? 0} / ${station.points} P`
   }
+
+  return `${station.points} P`
 }
 
-function StationDetail({ station, team, teamReady, onSubmit, onUnlock, onBuyHint, expandedHintImage, setExpandedHintImage }) {
+function StationDetail({
+  station,
+  team,
+  teamReady,
+  teamCanPlay,
+  timerStatus,
+  onSubmit,
+  onUnlock,
+  onBuyHint,
+  setExpandedHintImage,
+}) {
   const progress = team.stationProgress[station.id]
   const [answer, setAnswer] = useState(progress.answer ?? '')
   const [photoName, setPhotoName] = useState(progress.assetName ?? '')
   const [photoFile, setPhotoFile] = useState(null)
   const [unlockCode, setUnlockCode] = useState('')
+  const isSubmissionLocked = Boolean(progress.submittedAt)
+  const showHints =
+    Boolean(station.hints?.length) && teamCanPlay && progress.status !== 'solved'
 
   function handleSubmit(event) {
     event.preventDefault()
@@ -271,12 +285,6 @@ function StationDetail({ station, team, teamReady, onSubmit, onUnlock, onBuyHint
   return (
     <>
     <div className="task-panel">
-      <div className="task-meta">
-        <span>{station.zone}</span>
-        <span>{station.format}</span>
-        <span>{station.mandatory ? 'Pflicht' : 'Bonus'}</span>
-      </div>
-
       {station.imageUrl ? (
         <div className="task-visual">
           <img alt={station.imageName || station.name} src={station.imageUrl} />
@@ -286,51 +294,128 @@ function StationDetail({ station, team, teamReady, onSubmit, onUnlock, onBuyHint
       <p className="section-copy">{station.locationHint}</p>
       <p>{station.task}</p>
 
+      {showHints ? (
+        <div className="card stack simple-focus">
+          <div className="section-head compact">
+            <p className="eyebrow">Verfuegbare Hinweise</p>
+          </div>
+          <div className="hints-list">
+            {station.hints.map((hint, index) => {
+              const isAlreadyBought = progress.boughtHints?.includes(hint.id)
+              const previousHintsBought =
+                index === 0 ||
+                station.hints.slice(0, index).every((entry) => progress.boughtHints?.includes(entry.id))
+              const canBuyThisHint = previousHintsBought && !isAlreadyBought
+
+              return (
+                <div className="hint-card" key={hint.id}>
+                  <div style={{ width: '100%' }}>
+                    <p className="hint-label">Hinweis Stufe {index + 1}</p>
+                    {isAlreadyBought ? (
+                      <>
+                        <p className="hint-preview">{hint.content}</p>
+                        {hint.imageUrl ? (
+                        <div style={{ marginTop: '12px', marginBottom: '12px' }}>
+                          <img
+                            alt="Hinweis-Bild"
+                            src={hint.imageUrl}
+                            style={{
+                              width: '100%',
+                              maxWidth: '100%',
+                              height: 'auto',
+                              borderRadius: '12px',
+                              display: 'block',
+                              cursor: 'pointer',
+                              transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+                            }}
+                            onClick={() => setExpandedHintImage(hint.imageUrl)}
+                            onMouseEnter={(event) => {
+                              event.target.style.transform = 'scale(1.02)'
+                              event.target.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)'
+                            }}
+                            onMouseLeave={(event) => {
+                              event.target.style.transform = 'scale(1)'
+                              event.target.style.boxShadow = 'none'
+                            }}
+                            onError={(event) => {
+                              event.target.style.display = 'none'
+                            }}
+                          />
+                        </div>
+                        ) : null}
+                      </>
+                    ) : (
+                      <p className="hint-preview" style={{ fontStyle: 'italic', color: '#888' }}>
+                        Inhalt sichtbar nach dem Kauf
+                      </p>
+                    )}
+                    <p className="hint-cost">Kosten: {hint.cost} Punkte</p>
+                  </div>
+                  <button
+                    className={isAlreadyBought ? 'primary-button secondary' : 'primary-button'}
+                    disabled={isAlreadyBought || !canBuyThisHint}
+                    onClick={() => {
+                      if (canBuyThisHint) {
+                        onBuyHint(team.id, station.id, hint.id)
+                      }
+                    }}
+                    title={!canBuyThisHint ? 'Kaufe zuerst die vorherigen Hinweise' : ''}
+                    type="button"
+                  >
+                    {isAlreadyBought ? 'Gekauft' : canBuyThisHint ? 'Kaufen' : 'Gesperrt'}
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      ) : null}
+
       {!teamReady ? (
         <div className="review-note">
           <strong>Wartet auf den Start</strong>
           <p>Der Event-Timer wurde noch nicht gestartet. Das Antwortfeld bleibt bis dahin gesperrt.</p>
         </div>
+      ) : !teamCanPlay ? (
+        <div className="review-note">
+          <strong>{timerStatus === 'paused' ? 'Event pausiert' : 'Event gestoppt'}</strong>
+          <p>
+            {timerStatus === 'paused'
+              ? 'Der Timer ist pausiert. Freischaltungen und Antworten sind aktuell gesperrt.'
+              : 'Der Timer wurde gestoppt. Freischaltungen und Antworten sind nicht mehr moeglich.'}
+          </p>
+        </div>
       ) : !progress.unlocked ? (
-        <>
-          <div className="review-note">
-            <strong>Naechster Schritt</strong>
-            <p>Gebt zuerst den 4-stelligen Freischaltcode aus Buchstaben und Zahlen ein.</p>
-          </div>
-
-          <form className="stack" onSubmit={handleUnlockSubmit}>
-            <label className="field">
-              <span>Freischaltcode</span>
-              <input
-                maxLength="4"
-                onChange={(event) =>
-                  setUnlockCode(
-                    event.target.value.replace(/[^a-zA-Z0-9]+/g, '').slice(0, 4),
-                  )
-                }
-                placeholder="A1B2"
-                type="text"
-                value={unlockCode}
-              />
-            </label>
-            <button
-              className="primary-button"
-              disabled={unlockCode.length !== 4}
-              type="submit"
-            >
-              Freischalten
-            </button>
-          </form>
-        </>
+        <form className="stack" onSubmit={handleUnlockSubmit}>
+          <label className="field">
+            <span>Freischaltcode</span>
+            <small>Den code findet ihr an der jeweiligen station</small>
+            <input
+              maxLength="4"
+              onChange={(event) =>
+                setUnlockCode(
+                  event.target.value.replace(/[^a-zA-Z0-9]+/g, '').slice(0, 4),
+                )
+              }
+              placeholder="A1B2"
+              type="text"
+              value={unlockCode}
+            />
+          </label>
+          <button
+            className="primary-button"
+            disabled={unlockCode.length !== 4}
+            type="submit"
+          >
+            Freischalten
+          </button>
+        </form>
       ) : null}
 
       {progress.status === 'pending' ? (
         <div className="review-note">
           <strong>Antwort gesendet</strong>
-          <p>
-            Diese Aufgabe wird gerade geprueft. Ihr koennt warten oder eure
-            Antwort aktualisieren.
-          </p>
+          <p>Diese Aufgabe wird gerade geprueft und kann nicht mehr bearbeitet werden.</p>
         </div>
       ) : null}
 
@@ -343,7 +428,12 @@ function StationDetail({ station, team, teamReady, onSubmit, onUnlock, onBuyHint
               : 'Diese Aufgabe ist bereits geloest.'}
           </p>
         </div>
-      ) : teamReady && progress.unlocked ? (
+      ) : isSubmissionLocked ? (
+        <div className="review-note">
+          <strong>Antwort gesendet</strong>
+          <p>Diese Aufgabe wurde bereits abgeschickt und ist jetzt gesperrt.</p>
+        </div>
+      ) : teamCanPlay && progress.unlocked ? (
         <form className="stack" onSubmit={handleSubmit}>
           {station.type === 'choice' ? (
             <div className="choice-list">
@@ -386,7 +476,7 @@ function StationDetail({ station, team, teamReady, onSubmit, onUnlock, onBuyHint
           )}
 
           <button className="primary-button" type="submit">
-            {progress.status === 'pending' ? 'Antwort aktualisieren' : 'Antwort senden'}
+            Antwort senden
           </button>
         </form>
       ) : null}
@@ -398,78 +488,6 @@ function StationDetail({ station, team, teamReady, onSubmit, onUnlock, onBuyHint
         </div>
       ) : null}
 
-      {station.hints && station.hints.length > 0 && teamReady && progress.unlocked ? (
-        <div className="card stack simple-focus">
-          <div className="section-head compact">
-            <p className="eyebrow">Verfuegbare Hinweise</p>
-          </div>
-          <div className="hints-list">
-            {station.hints.map((hint, index) => {
-              const isAlreadyBought = progress.boughtHints?.includes(hint.id)
-              // Check if previous hints are bought (for hint levels)
-              const previousHintsBought = index === 0 || station.hints.slice(0, index).every((h) => progress.boughtHints?.includes(h.id))
-              const canBuyThisHint = previousHintsBought && !isAlreadyBought
-              
-              return (
-                <div className="hint-card" key={hint.id}>
-                  <div style={{ width: '100%' }}>
-                    <p className="hint-label">Hinweis Stufe {index + 1}</p>
-                    {isAlreadyBought ? (
-                      hint.type === 'text' ? (
-                        <p className="hint-preview">{hint.content}</p>
-                      ) : (
-                        <div style={{ marginTop: '12px', marginBottom: '12px' }}>
-                          <img 
-                            alt="Hinweis-Bild" 
-                            src={hint.content} 
-                            style={{ 
-                              width: '100%', 
-                              maxWidth: '100%',
-                              height: 'auto',
-                              borderRadius: '12px',
-                              display: 'block',
-                              cursor: 'pointer',
-                              transition: 'transform 0.2s ease, box-shadow 0.2s ease'
-                            }}
-                            onClick={() => setExpandedHintImage(hint.content)}
-                            onMouseEnter={(e) => {
-                              e.target.style.transform = 'scale(1.02)'
-                              e.target.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)'
-                            }}
-                            onMouseLeave={(e) => {
-                              e.target.style.transform = 'scale(1)'
-                              e.target.style.boxShadow = 'none'
-                            }}
-                            onError={(e) => {
-                              e.target.style.display = 'none'
-                            }}
-                          />
-                        </div>
-                      )
-                    ) : (
-                      <p className="hint-preview" style={{ fontStyle: 'italic', color: '#888' }}>Inhalt sichtbar nach dem Kauf</p>
-                    )}
-                    <p className="hint-cost">Kosten: {hint.cost} Punkte</p>
-                  </div>
-                  <button
-                    className={isAlreadyBought ? 'primary-button secondary' : 'primary-button'}
-                    disabled={isAlreadyBought || !canBuyThisHint}
-                    onClick={() => {
-                      if (canBuyThisHint) {
-                        onBuyHint(team.id, station.id, hint.id)
-                      }
-                    }}
-                    title={!canBuyThisHint ? 'Kaufe zuerst die vorherigen Hinweise' : ''}
-                    type="button"
-                  >
-                    {isAlreadyBought ? 'Gekauft' : canBuyThisHint ? 'Kaufen' : 'Gesperrt'}
-                  </button>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      ) : null}
     </div>
     </>
   )

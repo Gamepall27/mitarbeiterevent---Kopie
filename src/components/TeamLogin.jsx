@@ -3,14 +3,26 @@ import { normalizeAnswer } from '../utils/eventModel'
 
 function TeamLogin({ accessCodes, onLogin }) {
   const [code, setCode] = useState('')
+  const [groupName, setGroupName] = useState('')
   const matchingCode = useMemo(() => {
     const identifier = normalizeAnswer(code)
     return accessCodes.find((entry) => normalizeAnswer(entry.code) === identifier) ?? null
   }, [accessCodes, code])
+  const needsSetup = Boolean(matchingCode && !matchingCode.teamId)
 
   function handleSubmit(event) {
     event.preventDefault()
-    onLogin({ code })
+    if (needsSetup) {
+      onLogin({ code, groupName, mode: 'register-group' })
+      return
+    }
+
+    onLogin({ code, mode: 'login' })
+  }
+
+  function handleSetup(event) {
+    event.preventDefault()
+    onLogin({ code, groupName, mode: 'register-group' })
   }
 
   return (
@@ -42,14 +54,34 @@ function TeamLogin({ accessCodes, onLogin }) {
             <p className="hint-text">
               {matchingCode.teamId
                 ? 'Dieser Code oeffnet die vorhandene Gruppe.'
-                : 'Beim ersten Login wird die Gruppe mit diesem Code automatisch angelegt.'}
+                : 'Dieser Code ist neu. Legt zuerst einen Gruppennamen fest, bevor ihr euch anmeldet.'}
             </p>
           </div>
         ) : null}
 
-        <button className="primary-button" type="submit">
-          Gruppe oeffnen
-        </button>
+        {needsSetup ? (
+          <>
+            <label className="field">
+              <span>Gruppenname</span>
+              <input
+                autoComplete="off"
+                name="groupName"
+                onChange={(event) => setGroupName(event.target.value)}
+                placeholder="z. B. Team Blitz"
+                type="text"
+                value={groupName}
+              />
+            </label>
+
+            <button className="primary-button" onClick={handleSetup} type="button">
+              Gruppennamen festlegen
+            </button>
+          </>
+        ) : (
+          <button className="primary-button" type="submit">
+            Gruppe oeffnen
+          </button>
+        )}
       </form>
     </section>
   )

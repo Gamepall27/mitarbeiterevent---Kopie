@@ -16,6 +16,7 @@ export const stationCatalog = [
     zone: 'Startpunkt / Nordseite',
     area: 'Nordroute',
     type: 'qr',
+    requiresUnlockCode: true,
     format: 'Kontroll-Station',
     mandatory: true,
     points: 120,
@@ -28,7 +29,6 @@ export const stationCatalog = [
     rewardHint:
       'Die ersten beiden Fragmente bilden zusammen den Start des Finalbefehls.',
     unlockCode: '0001',
-    hints: [],
   },
   {
     id: 'rasterprobe',
@@ -36,6 +36,7 @@ export const stationCatalog = [
     zone: 'Parkweg West',
     area: 'Nordroute',
     type: 'text',
+    requiresUnlockCode: true,
     format: 'Logikfrage',
     mandatory: true,
     points: 90,
@@ -47,7 +48,6 @@ export const stationCatalog = [
     placeholder: 'Antwort eingeben',
     rewardHint: 'Die ersten beiden Fragmente gehoeren direkt hintereinander.',
     unlockCode: '0002',
-    hints: [],
   },
   {
     id: 'latenzfenster',
@@ -55,6 +55,7 @@ export const stationCatalog = [
     zone: 'Innenhof',
     area: 'Zentralroute',
     type: 'number',
+    requiresUnlockCode: true,
     format: 'Beobachtungsaufgabe',
     mandatory: true,
     points: 110,
@@ -67,7 +68,6 @@ export const stationCatalog = [
     rewardHint:
       'Der zweite Teil des Endbefehls beginnt mit einem einzelnen Buchstaben.',
     unlockCode: '0003',
-    hints: [],
   },
   {
     id: 'protokollwahl',
@@ -75,6 +75,7 @@ export const stationCatalog = [
     zone: 'Campusplatz',
     area: 'Zentralroute',
     type: 'choice',
+    requiresUnlockCode: true,
     format: 'Strategiefrage',
     mandatory: true,
     points: 95,
@@ -99,7 +100,6 @@ export const stationCatalog = [
     answer: 'c',
     rewardHint:
       'Der zweite Begriff des Finales ist ein Verb und wird hier weiter zusammengesetzt.',
-    hints: [],
     unlockCode: '0004',
   },
   {
@@ -108,6 +108,7 @@ export const stationCatalog = [
     zone: 'Suedroute / Kanalbruecke',
     area: 'Suedroute',
     type: 'manual',
+    requiresUnlockCode: true,
     format: 'Freitext mit Freigabe',
     mandatory: true,
     points: 130,
@@ -118,7 +119,6 @@ export const stationCatalog = [
       'Beschreibt in 2 bis 3 Saetzen euren Plan B, falls zwei Stationen gleichzeitig blockiert waeren. Diese Antwort muss im Admin-Panel freigegeben werden.',
     placeholder: 'Kurzer Freitext',
     rewardHint: 'Nach der Freigabe ist der finale Verbteil fast komplett.',
-    hints: [],
     unlockCode: '0005',
   },
   {
@@ -127,6 +127,7 @@ export const stationCatalog = [
     zone: 'Suedroute / Torbogen',
     area: 'Suedroute',
     type: 'qr',
+    requiresUnlockCode: true,
     format: 'Kontroll-Station',
     mandatory: true,
     points: 125,
@@ -139,7 +140,6 @@ export const stationCatalog = [
     rewardHint:
       'Mit diesem Fragment sollte der finale Befehl lesbar werden.',
     unlockCode: '0006',
-    hints: [],
   },
   {
     id: 'reflexfoto',
@@ -147,6 +147,7 @@ export const stationCatalog = [
     zone: 'Schaufensterpassage',
     area: 'Bonus',
     type: 'photo',
+    requiresUnlockCode: true,
     format: 'Foto-Challenge',
     mandatory: false,
     points: 70,
@@ -157,7 +158,6 @@ export const stationCatalog = [
     rewardHint:
       'Bonusstation fuer schnelle Teams. Kein Kernfragment, aber wertvolle Punkte.',
     unlockCode: '0007',
-    hints: [],
   },
   {
     id: 'debug-cache',
@@ -165,6 +165,7 @@ export const stationCatalog = [
     zone: 'Altstadt Ost',
     area: 'Bonus',
     type: 'text',
+    requiresUnlockCode: true,
     format: 'Bonusfrage',
     mandatory: false,
     points: 80,
@@ -176,7 +177,6 @@ export const stationCatalog = [
     placeholder: 'Antwort eingeben',
     rewardHint: 'Bonusstation fuer Gruppen mit freier Kapazitaet.',
     unlockCode: '0008',
-    hints: [],
   },
 ]
 
@@ -199,7 +199,7 @@ export function createStationProgress(
         submittedBy: '',
         reviewNote: '',
         reviewedAt: null,
-        unlocked: false,
+        unlocked: station.requiresUnlockCode === false,
         boughtHints: [],
       },
     ]),
@@ -233,7 +233,6 @@ export function createEmptyTeam({
     bonusPoints: 0,
     penaltyPoints: 0,
     stationProgress: createStationProgress(stations),
-    adminHints: [],
     activityLog: [
       {
         id: crypto.randomUUID(),
@@ -249,6 +248,9 @@ export function createInitialAppState() {
   return {
     eventDurationMinutes: EVENT_DURATION_MINUTES,
     eventStartedAt: null,
+    eventStatus: 'idle',
+    eventPausedAt: null,
+    eventPausedDurationMs: 0,
     accessCodes: [],
     stations: stationCatalog,
     teams: [],

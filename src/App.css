@@ -251,6 +251,16 @@
   color: #8f4d07;
 }
 
+.status-pill.rejected {
+  background: rgba(173, 34, 34, 0.14);
+  color: #9f2222;
+}
+
+.status-pill.wrong {
+  background: rgba(173, 34, 34, 0.14);
+  color: #9f2222;
+}
+
 .status-pill.bonus {
   background: rgba(255, 130, 61, 0.14);
   color: #a24d10;
@@ -559,6 +569,8 @@
 .simple-focus,
 .simple-sidebar,
 .task-panel {
+  display: flex;
+  flex-direction: column;
   gap: 16px;
 }
 

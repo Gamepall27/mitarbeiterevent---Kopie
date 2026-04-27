@@ -1,6 +1,62 @@
 import { useEffect, useRef, useState } from 'react'
-import { formatTime, getStationAnalytics, getStationName } from '../utils/eventModel'
+import {
+  formatCountdown,
+  formatTime,
+  generateAccessCode,
+  generateStableId,
+  getEventTimerState,
+  getDisplayProgressStatus,
+  getStationAnalytics,
+  getStationName,
+} from '../utils/eventModel'
 import Metric from './Metric'
+
+function createEmptyChoiceOption() {
+  return {
+    id: generateStableId('choice'),
+    label: '',
+  }
+}
+
+function createEmptyStationDraft() {
+  return {
+    name: '',
+    type: 'text',
+    points: 50,
+    requiresUnlockCode: true,
+    task: '',
+    answer: '',
+    placeholder: 'Antwort eingeben',
+    locationHint: '',
+    rewardHint: '',
+    fragment: '',
+    choiceOptions: [createEmptyChoiceOption(), createEmptyChoiceOption()],
+    correctChoiceId: '',
+    stationImage: null,
+    unlockCode: '',
+    hints: [],
+  }
+}
+
+function getTeamTaskLabel(task) {
+  if (task.status === 'solved') {
+    return `beantwortet - ${task.earnedPoints}/${task.points} P`
+  }
+
+  if (task.status === 'pending') {
+    return `wird geprueft - ${task.earnedPoints}/${task.points} P`
+  }
+
+  if (task.status === 'rejected') {
+    return `abgelehnt - ${task.points} P`
+  }
+
+  if (task.status === 'wrong') {
+    return `falsch beantwortet - ${task.points} P`
+  }
+
+  return `offen - ${task.points} P`
+}
 
 function AdminView({
   teams,
@@ -9,15 +65,16 @@ function AdminView({
   accessCodes,
   eventDurationMinutes,
   eventStartedAt,
+  eventStatus,
+  eventPausedAt,
+  eventPausedDurationMs,
+  eventTimerState,
   pendingApprovals,
   adminSelectedTeamId,
   adminSelectedTeam,
   adminSelectedStation,
   onSetAdminSelectedTeam,
   onSetAdminSelectedStation,
-  hintDraft,
-  onSetHintDraft,
-  onHint,
   onMarkCorrect,
   onBonus,
   onSetEventDurationMinutes,
@@ -30,55 +87,69 @@ function AdminView({
   onLogout,
   onReview,
   codeDraft,
+  onPauseEvent,
+  onResumeEvent,
   onStartEvent,
+  onStopEvent,
+  onResetEventTimer,
+  now,
 }) {
-  const [tab, setTab] = useState('overview')
+  const [tab, setTab] = useState('teams')
   const [selectedAnalysisStationId, setSelectedAnalysisStationId] = useState(null)
   const [timerDraft, setTimerDraft] = useState(String(eventDurationMinutes))
-  const [hintImage, setHintImage] = useState(null)
-  const [hintImageName, setHintImageName] = useState('')
   const [reviewNotes, setReviewNotes] = useState({})
   const reviewPointInputsRef = useRef({})
-  const [hintTypeDraft, setHintTypeDraft] = useState('text')
-  const [hintContentDraft, setHintContentDraft] = useState('')
+  const [hintTextDraft, setHintTextDraft] = useState('')
+  const [hintImageDraft, setHintImageDraft] = useState(null)
   const [hintCostDraft, setHintCostDraft] = useState('5')
-  const [stationDraft, setStationDraft] = useState({
-    name: '',
-    zone: '',
-    area: 'Custom',
-    type: 'text',
-    format: 'Admin-Aufgabe',
-    points: 50,
-    mandatory: true,
-    task: '',
-    answer: '',
-    placeholder: 'Antwort eingeben',
-    locationHint: '',
-    rewardHint: '',
-    fragment: '',
-    choicesText: '',
-    stationImage: null,
-    unlockCode: '',
-    hints: [],
-  })
+  const [stationDraft, setStationDraft] = useState(createEmptyStationDraft())
+  const [accessCodeInput, setAccessCodeInput] = useState('')
+  const [accessCodeSearch, setAccessCodeSearch] = useState('')
+  const resolvedTimerState =
+    eventTimerState ??
+    getEventTimerState(
+      { eventStartedAt, eventStatus, eventPausedAt, eventPausedDurationMs },
+      now,
+      eventDurationMinutes,
+    )
+
   const stuckTeams = teams.filter((team) => team.metrics.isStuck)
   const usedCodes = accessCodes.filter((entry) => entry.teamId)
+  const freeCodes = accessCodes.filter((entry) => !entry.teamId)
+  const filteredAccessCodes = accessCodes.filter((entry) => {
+    const needle = accessCodeSearch.trim().toLowerCase()
+
+    if (!needle) {
+      return true
+    }
+
+    return (
+      entry.code.toLowerCase().includes(needle) ||
+      entry.assignedGroupName.toLowerCase().includes(needle)
+    )
+  })
   const maxBasePoints = stations.reduce((sum, station) => sum + station.points, 0)
   const selectedTeamTaskSummary = adminSelectedTeam
     ? stations.map((station) => {
         const progress = adminSelectedTeam.stationProgress[station.id]
+        const status = getDisplayProgressStatus(progress)
 
         return {
           id: station.id,
           name: station.name,
           points: station.points,
-          status: progress.status,
-          earnedPoints: progress.status === 'solved' ? (progress.pointsAwarded ?? station.points) : 0,
+          status,
+          earnedPoints:
+            status === 'solved' || status === 'pending'
+              ? (progress.pointsAwarded ?? 0)
+              : 0,
         }
       })
     : []
   const solvedTasks = selectedTeamTaskSummary.filter((task) => task.status === 'solved')
-  const pendingTasks = selectedTeamTaskSummary.filter((task) => task.status === 'pending')
+  const reviewTasks = selectedTeamTaskSummary.filter((task) => task.status === 'pending')
+  const rejectedTasks = selectedTeamTaskSummary.filter((task) => task.status === 'rejected')
+  const wrongTasks = selectedTeamTaskSummary.filter((task) => task.status === 'wrong')
   const openTasks = selectedTeamTaskSummary.filter((task) => task.status === 'open')
 
   useEffect(() => {
@@ -113,31 +184,26 @@ function AdminView({
 
   function handleCreateStation(event) {
     event.preventDefault()
+
+    const normalizedChoiceOptions =
+      stationDraft.type === 'choice'
+        ? stationDraft.choiceOptions
+            .map((option) => ({
+              id: option.id,
+              label: option.label.trim(),
+              isCorrect: stationDraft.correctChoiceId === option.id,
+            }))
+            .filter((option) => option.label)
+        : []
+
     onCreateStation({
       ...stationDraft,
       points: Number(stationDraft.points),
+      choiceOptions: normalizedChoiceOptions,
     })
-    setStationDraft({
-      name: '',
-      zone: '',
-      area: 'Custom',
-      type: 'text',
-      format: 'Admin-Aufgabe',
-      points: 50,
-      mandatory: true,
-      task: '',
-      answer: '',
-      placeholder: 'Antwort eingeben',
-      locationHint: '',
-      rewardHint: '',
-      fragment: '',
-      choicesText: '',
-      stationImage: null,
-      unlockCode: '',
-      hints: [],
-    })
-    setHintTypeDraft('text')
-    setHintContentDraft('')
+    setStationDraft(createEmptyStationDraft())
+    setHintTextDraft('')
+    setHintImageDraft(null)
     setHintCostDraft('5')
   }
 
@@ -146,21 +212,28 @@ function AdminView({
     onSetEventDurationMinutes(Number(timerDraft))
   }
 
-  function handleHintSubmit() {
-    onHint({ text: hintDraft, hintImage })
-    setHintImage(null)
-    setHintImageName('')
+  function handleCreateCodeSubmit(event) {
+    event.preventDefault()
+    onCreateCode(accessCodeInput)
+    setAccessCodeInput('')
   }
 
   return (
     <section className="stack">
       <nav className="tabs">
         <button
-          className={tab === 'overview' ? 'tab-button active' : 'tab-button'}
-          onClick={() => setTab('overview')}
+          className={tab === 'teams' ? 'tab-button active' : 'tab-button'}
+          onClick={() => setTab('teams')}
           type="button"
         >
-          Uebersicht
+          Gruppen
+        </button>
+        <button
+          className={tab === 'tasks' ? 'tab-button active' : 'tab-button'}
+          onClick={() => setTab('tasks')}
+          type="button"
+        >
+          Aufgaben
         </button>
         <button
           className={
@@ -177,122 +250,36 @@ function AdminView({
         >
           Freigaben{pendingApprovals.length ? ` (${pendingApprovals.length})` : ''}
         </button>
+        <button
+          className={tab === 'setup' ? 'tab-button active' : 'tab-button'}
+          onClick={() => setTab('setup')}
+          type="button"
+        >
+          Setup
+        </button>
       </nav>
 
-      {tab === 'overview' ? (
+      {tab === 'teams' ? (
         <>
-          <div className="content-grid">
-            <div className="card stack">
-              <div className="section-head">
-                <div>
-                  <p className="eyebrow">Codeverwaltung</p>
-                  <h2>Admin erstellt neue Gruppencodes</h2>
-                </div>
-                <div className="action-row">
-                  <button className="ghost-button" onClick={onLogout} type="button">
-                    Admin abmelden
-                  </button>
-                  <button className="ghost-button" onClick={onReset} type="button">
-                    Daten resetten
-                  </button>
-                </div>
-              </div>
-
-              <form className="stack" onSubmit={onCreateCode}>
-                <button className="primary-button" type="submit">
-                  Neuen Gruppencode erstellen
-                </button>
-                {codeDraft ? (
-                  <div className="reward-panel">
-                    <strong>Zuletzt erstellt</strong>
-                    <p>{codeDraft}</p>
-                  </div>
-                ) : null}
-              </form>
-
-              <div className="metric-grid">
-                <Metric label="Codes gesamt" value={accessCodes.length} />
-                <Metric label="Unbenutzt" value={accessCodes.length - usedCodes.length} />
-                <Metric label="Aktive Gruppen" value={teams.filter((team) => team.active).length} />
-                <Metric label="Aufgaben" value={stations.length} />
-              </div>
-
-              <form className="content-grid" onSubmit={handleTimerSubmit}>
-                <label className="field">
-                  <span>Timer in Minuten</span>
-                  <input
-                    min="1"
-                    onChange={(event) => setTimerDraft(event.target.value)}
-                    type="number"
-                    value={timerDraft}
-                  />
-                </label>
-                <button className="primary-button secondary" type="submit">
-                  Timer speichern
-                </button>
-              </form>
-
-              <div className="action-row">
-                <button
-                  className="primary-button secondary"
-                  disabled={Boolean(eventStartedAt)}
-                  onClick={onStartEvent}
-                  type="button"
-                >
-                  {eventStartedAt ? 'Event-Timer laeuft' : 'Event-Timer starten'}
-                </button>
-              </div>
-
-              <div className="quick-team-list">
-                {accessCodes.length ? (
-                  accessCodes.map((entry) => (
-                    <div className="quick-team static-card" key={entry.id}>
-                      <div>
-                        <strong>{entry.code}</strong>
-                        <span>{entry.assignedGroupName || 'Noch keiner Gruppe zugeordnet'}</span>
-                      </div>
-                      <span className={`status-pill ${entry.teamId ? 'solved' : 'open'}`}>
-                        {entry.teamId ? 'vergeben' : 'frei'}
-                      </span>
-                    </div>
-                  ))
-                ) : (
-                  <p className="hint-text">Noch keine Gruppencodes erstellt.</p>
-                )}
-              </div>
-            </div>
-
-            <div className="card stack">
-              <p className="eyebrow">Orga-Lage</p>
-              <h3>Was gerade Aufmerksamkeit braucht</h3>
-              <div className="metric-grid">
-                <Metric label="Gruppen" value={teams.length} />
-                <Metric label="Stau-Gruppen" value={stuckTeams.length} />
-                <Metric label="Pending" value={pendingApprovals.length} />
-                </div>
-              <ul className="feature-list">
-                {stuckTeams.length ? (
-                  stuckTeams.map((team) => (
-                    <li key={team.id}>
-                      <strong>{team.name}</strong> haengt seit{' '}
-                      {team.metrics.minutesSinceActivity} Min. ohne neue Aktivitaet.
-                    </li>
-                  ))
-                ) : (
-                  <li>Aktuell haengt keine Gruppe deutlich fest.</li>
-                )}
-              </ul>
-            </div>
-          </div>
-
           <div className="content-grid">
             <div className="card stack">
               <div className="section-head compact">
                 <div>
-                  <p className="eyebrow">Live-Monitoring</p>
-                  <h3>Gruppen, Punkte und aktuelle Station</h3>
+                  <p className="eyebrow">Gruppenstatus</p>
+                  <h2>Teams, Punkte und aktuelle Lage</h2>
                 </div>
+                <button className="ghost-button" onClick={onLogout} type="button">
+                  Admin abmelden
+                </button>
               </div>
+
+              <div className="metric-grid">
+                <Metric label="Gruppen" value={teams.length} />
+                <Metric label="Aktiv" value={teams.filter((team) => team.active).length} />
+                <Metric label="Stau" value={stuckTeams.length} />
+                <Metric label="Freigaben" value={pendingApprovals.length} />
+              </div>
+
               <div className="table-list">
                 {rankedTeams.length ? (
                   rankedTeams.map((team, index) => (
@@ -317,7 +304,7 @@ function AdminView({
                         <div className="monitoring-detail">
                           <div className="section-head compact">
                             <div>
-                              <p className="eyebrow">Gruppendetails</p>
+                              <p className="eyebrow">Teamdetail</p>
                               <h3>{team.name}</h3>
                             </div>
                             <button
@@ -332,44 +319,68 @@ function AdminView({
                           <div className="metric-grid">
                             <Metric label="Punkte" value={team.metrics.points} />
                             <Metric label="Maximal" value={maxBasePoints} />
-                            <Metric label="Geloest" value={solvedTasks.length} />
-                            <Metric label="Offen" value={openTasks.length + pendingTasks.length} />
+                            <Metric label="Beantwortet" value={solvedTasks.length} />
+                            <Metric label="Pruefung" value={reviewTasks.length} />
                           </div>
 
                           <div className="content-grid monitoring-detail__grid">
                             <div className="stack">
-                              <div className="detail-block">
-                                <p className="eyebrow">Erledigt</p>
-                                <div className="task-list">
-                                  {solvedTasks.length ? (
-                                    solvedTasks.map((task) => (
-                                      <div className="task-row task-row--solved" key={task.id}>
-                                        <strong>{task.name}</strong>
-                                        <span>{task.earnedPoints}/{task.points} P</span>
-                                      </div>
+                              <label className="field">
+                                <span>Station fuer Schnellaktionen</span>
+                                <select
+                                  disabled={!stations.length}
+                                  onChange={(event) => onSetAdminSelectedStation(event.target.value)}
+                                  value={adminSelectedStation?.id ?? ''}
+                                >
+                                  {stations.length ? (
+                                    stations.map((station) => (
+                                      <option key={station.id} value={station.id}>
+                                        {station.name}
+                                      </option>
                                     ))
                                   ) : (
-                                    <p className="hint-text">Noch keine Aufgabe erledigt.</p>
+                                    <option value="">Keine Aufgaben angelegt</option>
                                   )}
-                                </div>
+                                </select>
+                              </label>
+
+                              <div className="action-row">
+                                <button
+                                  className="primary-button"
+                                  disabled={!adminSelectedStation}
+                                  onClick={onMarkCorrect}
+                                  type="button"
+                                >
+                                  Station freigeben
+                                </button>
+                              </div>
+
+                              <div className="action-row">
+                                <button className="ghost-button" onClick={() => onBonus(30)} type="button">
+                                  +30 Bonus
+                                </button>
+                                <button className="ghost-button" onClick={() => onBonus(-15)} type="button">
+                                  -15 Strafe
+                                </button>
+                                <button className="ghost-button" onClick={onToggleActive} type="button">
+                                  {adminSelectedTeam?.active ? 'Gruppe pausieren' : 'Gruppe aktivieren'}
+                                </button>
                               </div>
                             </div>
 
                             <div className="stack">
                               <div className="detail-block">
-                                <p className="eyebrow">Ausstehend</p>
+                                <p className="eyebrow">Aufgabenstand</p>
                                 <div className="task-list">
-                                  {pendingTasks.length || openTasks.length ? (
-                                    [...pendingTasks, ...openTasks].map((task) => (
+                                  {selectedTeamTaskSummary.length ? (
+                                    selectedTeamTaskSummary.map((task) => (
                                       <div className="task-row" key={task.id}>
                                         <strong>{task.name}</strong>
-                                        <span>
-                                          {task.status === 'pending' ? 'wartet' : 'offen'} - {task.points} P
-                                        </span>
+                                        <span>{getTeamTaskLabel(task)}</span>
                                       </div>
                                     ))
                                   ) : (
-                                    <p className="hint-text">Alle Aufgaben sind abgeschlossen.</p>
+                                    <p className="hint-text">Keine Aufgaben fuer dieses Team vorhanden.</p>
                                   )}
                                 </div>
                               </div>
@@ -386,105 +397,58 @@ function AdminView({
             </div>
 
             <div className="card stack">
-              <div className="section-head compact">
-                <div>
-                  <p className="eyebrow">Eingriffe</p>
-                  <h3>
-                    Schnellaktionen fuer {adminSelectedTeam?.name ?? 'noch keine Gruppe'}
-                  </h3>
+              <p className="eyebrow">Auffaelligkeiten</p>
+              <h3>Was gerade Aufmerksamkeit braucht</h3>
+              <ul className="feature-list">
+                {stuckTeams.length ? (
+                  stuckTeams.map((team) => (
+                    <li key={team.id}>
+                      <strong>{team.name}</strong> haengt seit {team.metrics.minutesSinceActivity} Min. ohne neue Aktivitaet.
+                    </li>
+                  ))
+                ) : (
+                  <li>Aktuell haengt keine Gruppe deutlich fest.</li>
+                )}
+              </ul>
+
+              <div className="detail-block">
+                <p className="eyebrow">Status-Summen</p>
+                <div className="task-list">
+                  <div className="task-row">
+                    <strong>Beantwortet</strong>
+                    <span>{solvedTasks.length}</span>
+                  </div>
+                  <div className="task-row">
+                    <strong>Wird geprueft</strong>
+                    <span>{reviewTasks.length}</span>
+                  </div>
+                  <div className="task-row">
+                    <strong>Abgelehnt</strong>
+                    <span>{rejectedTasks.length}</span>
+                  </div>
+                  <div className="task-row">
+                    <strong>Falsch beantwortet</strong>
+                    <span>{wrongTasks.length}</span>
+                  </div>
+                  <div className="task-row">
+                    <strong>Offen</strong>
+                    <span>{openTasks.length}</span>
+                  </div>
                 </div>
-              </div>
-
-              <label className="field">
-                <span>Gruppe</span>
-                <select
-                  disabled={!teams.length}
-                  onChange={(event) => onSetAdminSelectedTeam(event.target.value)}
-                  value={adminSelectedTeamId ?? ''}
-                >
-                  {teams.length ? (
-                    teams.map((team) => (
-                      <option key={team.id} value={team.id}>
-                        {team.name}
-                      </option>
-                    ))
-                  ) : (
-                    <option value="">Keine Gruppe aktiv</option>
-                  )}
-                </select>
-              </label>
-
-              <label className="field">
-                <span>Station</span>
-                <select
-                  disabled={!teams.length || !stations.length}
-                  onChange={(event) => onSetAdminSelectedStation(event.target.value)}
-                  value={adminSelectedStation?.id ?? ''}
-                >
-                  {stations.length ? (
-                    stations.map((station) => (
-                      <option key={station.id} value={station.id}>
-                        {station.name}
-                      </option>
-                    ))
-                  ) : (
-                    <option value="">Keine Aufgaben angelegt</option>
-                  )}
-                </select>
-              </label>
-
-              <label className="field">
-                <span>Hinweis senden</span>
-                <textarea
-                  onChange={(event) => onSetHintDraft(event.target.value)}
-                  rows="3"
-                  value={hintDraft}
-                />
-              </label>
-
-              <label className="field">
-                <span>Hinweisbild</span>
-                <input
-                  accept="image/*"
-                  onChange={(event) => {
-                    const nextFile = event.target.files?.[0] ?? null
-                    setHintImage(nextFile)
-                    setHintImageName(nextFile?.name ?? '')
-                  }}
-                  type="file"
-                />
-                {hintImageName ? <small>{hintImageName}</small> : null}
-              </label>
-
-              <div className="action-row">
-                <button className="primary-button" disabled={!adminSelectedTeam} onClick={handleHintSubmit} type="button">
-                  Hinweis senden
-                </button>
-                <button className="ghost-button" disabled={!adminSelectedTeam || !adminSelectedStation} onClick={onMarkCorrect} type="button">
-                  Station freigeben
-                </button>
-              </div>
-
-              <div className="action-row">
-                <button className="ghost-button" disabled={!adminSelectedTeam} onClick={() => onBonus(30)} type="button">
-                  +30 Bonus
-                </button>
-                <button className="ghost-button" disabled={!adminSelectedTeam} onClick={() => onBonus(-15)} type="button">
-                  -15 Strafe
-                </button>
-                <button className="ghost-button" disabled={!adminSelectedTeam} onClick={onToggleActive} type="button">
-                  {adminSelectedTeam?.active ? 'Gruppe pausieren' : 'Gruppe aktivieren'}
-                </button>
               </div>
             </div>
           </div>
+        </>
+      ) : null}
 
+      {tab === 'tasks' ? (
+        <>
           <div className="content-grid">
             <div className="card stack">
               <div className="section-head compact">
                 <div>
                   <p className="eyebrow">Aufgabenverwaltung</p>
-                  <h3>Neue Aufgabe anlegen</h3>
+                  <h2>Neue Aufgabe anlegen</h2>
                 </div>
               </div>
 
@@ -505,7 +469,26 @@ function AdminView({
                     <span>Typ</span>
                     <select
                       onChange={(event) =>
-                        setStationDraft((current) => ({ ...current, type: event.target.value }))
+                        setStationDraft((current) => {
+                          const nextType = event.target.value
+
+                          if (nextType !== 'choice') {
+                            return { ...current, type: nextType }
+                          }
+
+                          const choiceOptions =
+                            current.choiceOptions?.length >= 2
+                              ? current.choiceOptions
+                              : [createEmptyChoiceOption(), createEmptyChoiceOption()]
+
+                          return {
+                            ...current,
+                            type: nextType,
+                            answer: '',
+                            choiceOptions,
+                            correctChoiceId: current.correctChoiceId,
+                          }
+                        })
                       }
                       value={stationDraft.type}
                     >
@@ -532,29 +515,26 @@ function AdminView({
                   </label>
                 </div>
 
-                <div className="content-grid">
-                  <label className="field">
-                    <span>Zone</span>
+                <label className="field">
+                  <span>Freischaltung</span>
+                  <label style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
                     <input
+                      checked={stationDraft.requiresUnlockCode}
                       onChange={(event) =>
-                        setStationDraft((current) => ({ ...current, zone: event.target.value }))
+                        setStationDraft((current) => ({
+                          ...current,
+                          requiresUnlockCode: event.target.checked,
+                          unlockCode: event.target.checked ? current.unlockCode : '',
+                        }))
                       }
-                      type="text"
-                      value={stationDraft.zone}
+                      type="checkbox"
                     />
+                    <span>Freischaltcode erforderlich</span>
                   </label>
-
-                  <label className="field">
-                    <span>Format</span>
-                    <input
-                      onChange={(event) =>
-                        setStationDraft((current) => ({ ...current, format: event.target.value }))
-                      }
-                      type="text"
-                      value={stationDraft.format}
-                    />
-                  </label>
-                </div>
+                  <small>
+                    Wenn deaktiviert, ist die Aufgabe fuer Spieler sofort verfuegbar.
+                  </small>
+                </label>
 
                 <label className="field">
                   <span>Aufgabe</span>
@@ -567,18 +547,117 @@ function AdminView({
                   />
                 </label>
 
+                {stationDraft.type === 'choice' ? (
+                  <div className="stack">
+                    <div className="section-head compact">
+                      <div>
+                        <p className="eyebrow">Antwortoptionen</p>
+                        <h3>Optionen und richtige Antwort</h3>
+                      </div>
+                    </div>
+
+                    {stationDraft.choiceOptions.map((option, index) => (
+                      <div className="content-grid" key={option.id}>
+                        <label className="field">
+                          <span>Option {index + 1}</span>
+                          <input
+                            onChange={(event) =>
+                              setStationDraft((current) => ({
+                                ...current,
+                                choiceOptions: current.choiceOptions.map((entry) =>
+                                  entry.id === option.id
+                                    ? { ...entry, label: event.target.value }
+                                    : entry,
+                                ),
+                              }))
+                            }
+                            type="text"
+                            value={option.label}
+                          />
+                        </label>
+
+                        <label className="field">
+                          <span>Richtige Antwort</span>
+                          <input
+                            checked={stationDraft.correctChoiceId === option.id}
+                            name="correct-choice"
+                            onChange={() =>
+                              setStationDraft((current) => ({
+                                ...current,
+                                correctChoiceId: option.id,
+                              }))
+                            }
+                            type="radio"
+                          />
+                        </label>
+
+                        <button
+                          className="ghost-button danger-button"
+                          disabled={stationDraft.choiceOptions.length <= 2}
+                          onClick={() =>
+                            setStationDraft((current) => {
+                              const nextChoiceOptions = current.choiceOptions.filter(
+                                (entry) => entry.id !== option.id,
+                              )
+
+                              return {
+                                ...current,
+                                choiceOptions: nextChoiceOptions,
+                                correctChoiceId:
+                                  current.correctChoiceId === option.id
+                                    ? ''
+                                    : current.correctChoiceId,
+                              }
+                            })
+                          }
+                          type="button"
+                        >
+                          Entfernen
+                        </button>
+                      </div>
+                    ))}
+
+                    <button
+                      className="ghost-button"
+                      onClick={() =>
+                        setStationDraft((current) => ({
+                          ...current,
+                          choiceOptions: [
+                            ...current.choiceOptions,
+                            createEmptyChoiceOption(),
+                          ],
+                        }))
+                      }
+                      type="button"
+                    >
+                      Weitere Option
+                    </button>
+                  </div>
+                ) : (
+                  <label className="field">
+                    <span>
+                      {stationDraft.type === 'estimate'
+                        ? 'Echter Wert fuer die Schaetzung'
+                        : 'Loesung / erwartete Antwort'}
+                    </span>
+                    <input
+                      onChange={(event) =>
+                        setStationDraft((current) => ({ ...current, answer: event.target.value }))
+                      }
+                      type={stationDraft.type === 'estimate' ? 'number' : 'text'}
+                      value={stationDraft.answer}
+                    />
+                  </label>
+                )}
+
                 <label className="field">
-                  <span>
-                    {stationDraft.type === 'estimate'
-                      ? 'Echter Wert fuer die Schaetzung'
-                      : 'Loesung / erwartete Antwort'}
-                  </span>
-                  <input
+                  <span>Ortshinweis</span>
+                  <textarea
                     onChange={(event) =>
-                      setStationDraft((current) => ({ ...current, answer: event.target.value }))
+                      setStationDraft((current) => ({ ...current, locationHint: event.target.value }))
                     }
-                    type={stationDraft.type === 'estimate' ? 'number' : 'text'}
-                    value={stationDraft.answer}
+                    rows="2"
+                    value={stationDraft.locationHint}
                   />
                 </label>
 
@@ -594,63 +673,33 @@ function AdminView({
                     }
                     type="file"
                   />
-                  {stationDraft.stationImage ? (
-                    <small>{stationDraft.stationImage.name}</small>
-                  ) : null}
+                  {stationDraft.stationImage ? <small>{stationDraft.stationImage.name}</small> : null}
                 </label>
 
-                <label className="field">
-                  <span>Freischaltungscode (4 Zeichen, Buchstaben/Zahlen)</span>
-                  <input
-                    onChange={(event) =>
-                      setStationDraft((current) => ({
-                        ...current,
-                        unlockCode: event.target.value
-                          .replace(/[^a-zA-Z0-9]+/g, '')
-                          .slice(0, 4),
-                      }))
-                    }
-                    placeholder="z. B. A1B2"
-                    type="text"
-                    value={stationDraft.unlockCode}
-                    maxLength="4"
-                  />
-                </label>
-
-                {stationDraft.type === 'choice' ? (
+                {stationDraft.requiresUnlockCode ? (
                   <label className="field">
-                    <span>Antwortoptionen, je Zeile eine</span>
-                    <textarea
+                    <span>Freischaltungscode (4 Zeichen, Buchstaben/Zahlen)</span>
+                    <input
+                      maxLength="4"
                       onChange={(event) =>
                         setStationDraft((current) => ({
                           ...current,
-                          choicesText: event.target.value,
+                          unlockCode: event.target.value
+                            .replace(/[^a-zA-Z0-9]+/g, '')
+                            .slice(0, 4),
                         }))
                       }
-                      rows="4"
-                      value={stationDraft.choicesText}
+                      placeholder="z. B. A1B2"
+                      type="text"
+                      value={stationDraft.unlockCode}
                     />
                   </label>
                 ) : null}
 
-                <label className="field checkbox-field">
-                  <span>Pflichtaufgabe</span>
-                  <input
-                    checked={stationDraft.mandatory}
-                    onChange={(event) =>
-                      setStationDraft((current) => ({
-                        ...current,
-                        mandatory: event.target.checked,
-                      }))
-                    }
-                    type="checkbox"
-                  />
-                </label>
-
                 <div className="section-head compact">
                   <div>
                     <p className="eyebrow">Hinweise</p>
-                    <h4>Spieler-Hinweise hinzufuegen</h4>
+                    <h3>Spieler-Hinweise vorbereiten</h3>
                   </div>
                 </div>
 
@@ -659,7 +708,8 @@ function AdminView({
                     {stationDraft.hints.map((hint, index) => (
                       <div className="task-row" key={hint.id}>
                         <div>
-                          <strong>Hinweis Stufe {index + 1}: {hint.content?.substring(0, 40)}...</strong>
+                          <strong>Hinweis Stufe {index + 1}</strong>
+                          <p className="hint-text">{hint.content}</p>
                           <p className="hint-text">{hint.cost} Punkte</p>
                         </div>
                         <button
@@ -667,7 +717,7 @@ function AdminView({
                           onClick={() =>
                             setStationDraft((current) => ({
                               ...current,
-                              hints: current.hints.filter((h) => h.id !== hint.id),
+                              hints: current.hints.filter((entry) => entry.id !== hint.id),
                             }))
                           }
                           type="button"
@@ -683,17 +733,6 @@ function AdminView({
 
                 <div className="content-grid">
                   <label className="field">
-                    <span>Hinweis-Typ</span>
-                    <select
-                      onChange={(event) => setHintTypeDraft(event.target.value)}
-                      value={hintTypeDraft}
-                    >
-                      <option value="text">Text</option>
-                      <option value="image">Bild</option>
-                    </select>
-                  </label>
-
-                  <label className="field">
                     <span>Kosten (Punkte)</span>
                     <input
                       min="1"
@@ -704,71 +743,72 @@ function AdminView({
                   </label>
                 </div>
 
-                {hintTypeDraft === 'text' ? (
-                  <label className="field">
-                    <span>Hinweis-Text</span>
-                    <textarea
-                      onChange={(event) => setHintContentDraft(event.target.value)}
-                      placeholder="Geben Sie einen hilfreichen Hinweis ein"
-                      rows="2"
-                      value={hintContentDraft}
-                    />
-                  </label>
-                ) : (
-                  <label className="field">
-                    <span>Hinweis-Bild</span>
-                    <input
-                      accept="image/*"
-                      onChange={(event) => {
-                        const file = event.target.files?.[0]
-                        if (file) {
-                          setHintContentDraft(file)
-                        }
-                      }}
-                      type="file"
-                    />
-                  </label>
-                )}
+                <label className="field">
+                  <span>Hinweis-Text</span>
+                  <textarea
+                    onChange={(event) => setHintTextDraft(event.target.value)}
+                    rows="2"
+                    value={hintTextDraft}
+                  />
+                </label>
+
+                <label className="field">
+                  <span>Optionales Hinweis-Bild</span>
+                  <input
+                    accept="image/*"
+                    onChange={(event) => {
+                      setHintImageDraft(event.target.files?.[0] ?? null)
+                    }}
+                    type="file"
+                  />
+                  {hintImageDraft ? <small>{hintImageDraft.name}</small> : null}
+                </label>
 
                 <button
                   className="ghost-button"
                   onClick={() => {
-                    if (!hintContentDraft) return
-                    
-                    // For image hints, we need to read the file as a data URL
-                    if (hintTypeDraft === 'image' && hintContentDraft instanceof File) {
+                    const trimmedHintText = hintTextDraft.trim()
+
+                    if (!trimmedHintText) {
+                      return
+                    }
+
+                    if (hintImageDraft instanceof File) {
                       const reader = new FileReader()
                       reader.onload = (event) => {
                         const newHint = {
-                          id: crypto.randomUUID?.() || Math.random().toString(36).substr(2, 9),
-                          type: hintTypeDraft,
-                          content: event.target.result, // Data URL for image
+                          id: crypto.randomUUID?.() || Math.random().toString(36).slice(2, 11),
+                          content: trimmedHintText,
+                          imageUrl: event.target.result,
                           cost: Number(hintCostDraft),
                         }
+
                         setStationDraft((current) => ({
                           ...current,
                           hints: [...(current.hints || []), newHint],
                         }))
-                        setHintContentDraft('')
+                        setHintTextDraft('')
+                        setHintImageDraft(null)
                         setHintCostDraft('5')
-                        setHintTypeDraft('text')
                       }
-                      reader.readAsDataURL(hintContentDraft)
-                    } else {
-                      const newHint = {
-                        id: crypto.randomUUID?.() || Math.random().toString(36).substr(2, 9),
-                        type: hintTypeDraft,
-                        content: hintTypeDraft === 'text' ? hintContentDraft : hintContentDraft.name,
-                        cost: Number(hintCostDraft),
-                      }
-                      setStationDraft((current) => ({
-                        ...current,
-                        hints: [...(current.hints || []), newHint],
-                      }))
-                      setHintContentDraft('')
-                      setHintCostDraft('5')
-                      setHintTypeDraft('text')
+                      reader.readAsDataURL(hintImageDraft)
+                      return
                     }
+
+                    const newHint = {
+                      id: crypto.randomUUID?.() || Math.random().toString(36).slice(2, 11),
+                      content: trimmedHintText,
+                      imageUrl: '',
+                      cost: Number(hintCostDraft),
+                    }
+
+                    setStationDraft((current) => ({
+                      ...current,
+                      hints: [...(current.hints || []), newHint],
+                    }))
+                    setHintTextDraft('')
+                    setHintImageDraft(null)
+                    setHintCostDraft('5')
                   }}
                   type="button"
                 >
@@ -784,260 +824,404 @@ function AdminView({
             <div className="card stack">
               <div className="section-head compact">
                 <div>
-                  <p className="eyebrow">Aufgabenliste</p>
-                  <h3>Vorhandene Aufgaben entfernen</h3>
+                  <p className="eyebrow">Bestehende Aufgaben</p>
+                  <h2>Analyse und Loeschen</h2>
                 </div>
               </div>
+
               <div className="task-list">
                 {stations.length ? (
-                  stations.map((station) => (
-                    <div className="task-row" key={station.id}>
-                      <div>
-                        <strong>{station.name}</strong>
-                        <p className="hint-text">
-                          {station.type} - {station.points} P
-                        </p>
+                  stations.map((station) => {
+                    const analytics = getStationAnalytics(teams, station.id)
+                    const isSelected = selectedAnalysisStationId === station.id
+
+                    return (
+                      <div className="monitoring-team" key={station.id}>
+                        <button
+                          className={isSelected ? 'table-row active' : 'table-row'}
+                          onClick={() =>
+                            setSelectedAnalysisStationId(isSelected ? null : station.id)
+                          }
+                          type="button"
+                        >
+                          <span>{station.name}</span>
+                          <span>{station.type}</span>
+                          <span>{station.points} P</span>
+                          <span>{analytics.solved} beantwortet</span>
+                          <span>{analytics.pending} eingereicht</span>
+                          <span>{analytics.wrongAttempts} Fehler</span>
+                        </button>
+
+                        {isSelected ? (
+                          <div className="monitoring-detail">
+                            <div className="section-head compact">
+                              <div>
+                                <p className="eyebrow">Aufgabendetail</p>
+                                <h3>{station.name}</h3>
+                              </div>
+                              <button
+                                className="ghost-button danger-button"
+                                onClick={() => onDeleteStation(station.id)}
+                                type="button"
+                              >
+                                Aufgabe loeschen
+                              </button>
+                            </div>
+
+                            <div className="task-panel">
+                              <div className="task-meta">
+                                <span>{station.type}</span>
+                                <span>{station.points} Punkte</span>
+                              </div>
+
+                              {station.imageUrl ? (
+                                <div className="task-visual">
+                                  <img alt={station.imageName || station.name} src={station.imageUrl} />
+                                </div>
+                              ) : null}
+
+                              <p className="section-copy">{station.locationHint}</p>
+                              <p>{station.task}</p>
+
+                              {station.type === 'choice' && station.choices ? (
+                                <div className="detail-block">
+                                  <p className="eyebrow">Antwortoptionen</p>
+                                  <ul className="feature-list">
+                                    {station.choices.map((choice) => (
+                                      <li key={choice.id}>{choice.label}</li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              ) : null}
+
+                              {station.answer ? (
+                                <div className="reward-panel">
+                                  <strong>Loesung</strong>
+                                  <p>{station.answer}</p>
+                                </div>
+                              ) : null}
+
+                              <div className="detail-block">
+                                <p className="eyebrow">Analyse</p>
+                                <div className="task-list">
+                                  <div className="task-row">
+                                    <strong>Beantwortet</strong>
+                                    <span>{analytics.solved}</span>
+                                  </div>
+                                  <div className="task-row">
+                                    <strong>Eingereicht</strong>
+                                    <span>{analytics.pending}</span>
+                                  </div>
+                                  <div className="task-row">
+                                    <strong>Fehlerhafte Versuche</strong>
+                                    <span>{analytics.wrongAttempts}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
-                      <button
-                        className="ghost-button danger-button"
-                        onClick={() => onDeleteStation(station.id)}
-                        type="button"
-                      >
-                        Loeschen
-                      </button>
-                    </div>
-                  ))
+                    )
+                  })
                 ) : (
                   <p className="hint-text">Noch keine Aufgaben vorhanden.</p>
                 )}
               </div>
             </div>
           </div>
+        </>
+      ) : null}
+
+      {tab === 'approvals' ? (
+        <div className="card stack">
+          <div className="section-head">
+            <div>
+              <p className="eyebrow">Freigaben</p>
+              <h2>Uploads und Freitext-Antworten pruefen</h2>
+            </div>
+            <Metric label="Offen" value={pendingApprovals.length} />
+          </div>
+
+          <div className="approval-list">
+            {pendingApprovals.length ? (
+              pendingApprovals.map((approval) => (
+                <div className="approval-card" key={`${approval.teamId}-${approval.stationId}`}>
+                  <div className="approval-card__head">
+                    <div>
+                      <strong>{approval.teamName}</strong>
+                      <p>
+                        {approval.stationName} - {approval.submittedBy || 'ohne Namen'} -{' '}
+                        {formatTime(approval.submittedAt)}
+                      </p>
+                    </div>
+                    <span className="status-pill locked">wartet</span>
+                  </div>
+
+                  {approval.answer ? (
+                    <div className="review-note">
+                      <strong>Antwort</strong>
+                      <p>{approval.answer}</p>
+                    </div>
+                  ) : null}
+
+                  {approval.assetUrl ? (
+                    <div className="approval-preview">
+                      <img alt={approval.assetName || approval.stationName} src={approval.assetUrl} />
+                    </div>
+                  ) : null}
+
+                  <label className="field">
+                    <span>Ablehnungsgrund oder Kommentar</span>
+                    <textarea
+                      onChange={(event) => setReviewNote(approval, event.target.value)}
+                      rows="3"
+                      value={getReviewNote(approval)}
+                    />
+                  </label>
+
+                  {approval.stationType === 'manual' ? (
+                    <label className="field">
+                      <span>Punkte bei Freigabe</span>
+                      <input
+                        defaultValue={approval.stationPoints}
+                        max={approval.stationPoints}
+                        min="0"
+                        ref={(element) => {
+                          const key = `${approval.teamId}:${approval.stationId}`
+
+                          if (element) {
+                            reviewPointInputsRef.current[key] = element
+                            return
+                          }
+
+                          delete reviewPointInputsRef.current[key]
+                        }}
+                        type="number"
+                      />
+                      <small>Maximum: {approval.stationPoints} Punkte</small>
+                    </label>
+                  ) : null}
+
+                  <div className="action-row">
+                    <button
+                      className="primary-button"
+                      onClick={() => {
+                        onReview(
+                          approval.teamId,
+                          approval.stationId,
+                          'approve',
+                          getReviewNote(approval),
+                          approval.stationType === 'manual'
+                            ? Number(getReviewPoints(approval))
+                            : undefined,
+                        )
+                        clearApprovalDraft(approval)
+                      }}
+                      type="button"
+                    >
+                      Freigeben
+                    </button>
+                    <button
+                      className="ghost-button"
+                      onClick={() => {
+                        onReview(approval.teamId, approval.stationId, 'reject', getReviewNote(approval))
+                        clearApprovalDraft(approval)
+                      }}
+                      type="button"
+                    >
+                      Ablehnen
+                    </button>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="hint-text">Aktuell warten keine neuen Einreichungen.</p>
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      {tab === 'setup' ? (
+        <div className="content-grid">
+          <div className="card stack">
+            <div className="section-head">
+              <div>
+                <p className="eyebrow">Codeverwaltung</p>
+                <h2>Codes und Event-Steuerung</h2>
+              </div>
+              <button className="ghost-button" onClick={onReset} type="button">
+                Daten resetten
+              </button>
+            </div>
+
+            <form className="stack" onSubmit={handleCreateCodeSubmit}>
+              <label className="field">
+                <span>Gruppencode</span>
+                <div className="action-row">
+                  <input
+                    onChange={(event) =>
+                      setAccessCodeInput(
+                        event.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 32),
+                      )
+                    }
+                    placeholder="TEAM-ABCD"
+                    type="text"
+                    value={accessCodeInput}
+                  />
+                  <button
+                    className="ghost-button"
+                    onClick={() => setAccessCodeInput(generateAccessCode())}
+                    type="button"
+                  >
+                    Generieren
+                  </button>
+                </div>
+              </label>
+              <button className="primary-button" type="submit">
+                Gruppencode erstellen
+              </button>
+              {codeDraft ? (
+                <div className="reward-panel">
+                  <strong>Zuletzt erstellt</strong>
+                  <p>{codeDraft}</p>
+                </div>
+              ) : null}
+            </form>
+
+            <div className="metric-grid">
+              <Metric label="Codes gesamt" value={accessCodes.length} />
+              <Metric label="Frei" value={freeCodes.length} />
+              <Metric label="Vergeben" value={usedCodes.length} />
+              <Metric label="Aufgaben" value={stations.length} />
+            </div>
+
+            <form className="content-grid" onSubmit={handleTimerSubmit}>
+              <label className="field">
+                <span>Timer in Minuten</span>
+                <input
+                  min="1"
+                  onChange={(event) => setTimerDraft(event.target.value)}
+                  type="number"
+                  value={timerDraft}
+                />
+              </label>
+              <button className="primary-button secondary" type="submit">
+                Timer speichern
+              </button>
+            </form>
+
+            <div className="metric-grid">
+              <Metric
+                label="Timer-Status"
+                value={
+                  resolvedTimerState.status === 'running'
+                    ? 'laeuft'
+                    : resolvedTimerState.status === 'paused'
+                      ? 'pausiert'
+                      : resolvedTimerState.status === 'stopped'
+                        ? 'gestoppt'
+                        : 'bereit'
+                }
+              />
+              <Metric
+                label="Restzeit"
+                value={formatCountdown(
+                  { eventStartedAt, eventStatus, eventPausedAt, eventPausedDurationMs },
+                  now,
+                  eventDurationMinutes,
+                )}
+              />
+              <Metric
+                label="Gestartet"
+                value={eventStartedAt ? formatTime(eventStartedAt) : 'noch nicht'}
+              />
+            </div>
+
+            <div className="action-row">
+              <button
+                className="primary-button secondary"
+                disabled={resolvedTimerState.status !== 'idle'}
+                onClick={onStartEvent}
+                type="button"
+              >
+                Event-Timer starten
+              </button>
+              <button
+                className="ghost-button"
+                disabled={resolvedTimerState.status !== 'running'}
+                onClick={onPauseEvent}
+                type="button"
+              >
+                Pausieren
+              </button>
+              <button
+                className="ghost-button"
+                disabled={resolvedTimerState.status !== 'paused'}
+                onClick={onResumeEvent}
+                type="button"
+              >
+                Fortsetzen
+              </button>
+              <button
+                className="ghost-button"
+                disabled={!['running', 'paused'].includes(resolvedTimerState.status)}
+                onClick={onStopEvent}
+                type="button"
+              >
+                Stoppen
+              </button>
+              <button
+                className="ghost-button"
+                disabled={resolvedTimerState.status === 'idle'}
+                onClick={onResetEventTimer}
+                type="button"
+              >
+                Timer zuruecksetzen
+              </button>
+            </div>
+          </div>
 
           <div className="card stack">
             <div className="section-head compact">
               <div>
-                <p className="eyebrow">Stationsanalyse</p>
-                <h3>Loesungsquote und Problemstellen</h3>
+                <p className="eyebrow">Gruppencodes</p>
+                <h2>Freie und vergebene Codes</h2>
               </div>
             </div>
-            <div className="mission-metrics">
-              {stations.map((station) => {
-                const analytics = getStationAnalytics(teams, station.id)
-                const isSelected = selectedAnalysisStationId === station.id
 
-                return (
-                  <div key={station.id}>
-                    <button
-                      className={`mission-card ${isSelected ? 'active' : ''}`}
-                      onClick={() => {
-                        if (isSelected) {
-                          setSelectedAnalysisStationId(null)
-                        } else {
-                          setSelectedAnalysisStationId(station.id)
-                        }
-                      }}
-                      type="button"
-                      style={{ width: '100%', textAlign: 'left', border: 'none', background: 'none', cursor: 'pointer' }}
-                    >
-                      <div className="mission-card__top">
-                        <strong>{station.name}</strong>
-                        <span className={`status-pill ${station.mandatory ? 'open' : 'bonus'}`}>
-                          {station.mandatory ? 'Pflicht' : 'Bonus'}
-                        </span>
-                      </div>
-                      <p>
-                        {station.format} - {station.zone}
-                      </p>
-                      <div className="mission-card__stats">
-                        <span>{analytics.solved} geloest</span>
-                        <span>{analytics.pending} pending</span>
-                        <span>{analytics.wrongAttempts} Fehler</span>
-                      </div>
-                    </button>
+            <label className="field">
+              <span>Code einlesen oder suchen</span>
+              <input
+                onChange={(event) => setAccessCodeSearch(event.target.value)}
+                placeholder="Code oder Gruppenname eingeben"
+                type="text"
+                value={accessCodeSearch}
+              />
+            </label>
 
-                    {isSelected ? (
-                      <div className="card stack" style={{ marginTop: '12px' }}>
-                        <div className="task-panel">
-                          <div className="task-meta">
-                            <span>{station.zone}</span>
-                            <span>{station.format}</span>
-                            <span>{station.mandatory ? 'Pflicht' : 'Bonus'}</span>
-                            <span>{station.points} Punkte</span>
-                          </div>
-
-                          {station.imageUrl ? (
-                            <div className="task-visual">
-                              <img alt={station.imageName || station.name} src={station.imageUrl} />
-                            </div>
-                          ) : null}
-
-                          <p className="section-copy">{station.locationHint}</p>
-                          <p><strong>Aufgabe:</strong></p>
-                          <p>{station.task}</p>
-
-                          {station.type === 'choice' && station.choices ? (
-                            <div style={{ marginTop: '12px' }}>
-                              <p><strong>Antwortoptionen:</strong></p>
-                              <ul style={{ marginLeft: '20px' }}>
-                                {station.choices.map((choice) => (
-                                  <li key={choice.id}>{choice.label}</li>
-                                ))}
-                              </ul>
-                            </div>
-                          ) : null}
-
-                          {station.answer ? (
-                            <div style={{ marginTop: '12px', padding: '12px', background: 'rgba(36, 120, 153, 0.08)', borderRadius: '12px' }}>
-                              <p><strong>Loesung:</strong></p>
-                              <p>{station.answer}</p>
-                            </div>
-                          ) : null}
-
-                          {station.hints && station.hints.length > 0 ? (
-                            <div style={{ marginTop: '16px' }}>
-                              <p><strong>Verfuegbare Hinweise:</strong></p>
-                              <div className="hints-list" style={{ marginTop: '8px' }}>
-                                {station.hints.map((hint, index) => (
-                                  <div className="hint-card" key={hint.id}>
-                                    <div>
-                                      <p className="hint-label">Hinweis Stufe {index + 1}</p>
-                                      {hint.type === 'text' ? (
-                                        <p className="hint-preview">{hint.content}</p>
-                                      ) : null}
-                                      <p className="hint-cost">Kosten: {hint.cost} Punkte</p>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          ) : null}
-
-                          <div style={{ marginTop: '16px', padding: '12px', background: 'rgba(255, 255, 255, 0.72)', borderRadius: '12px', border: '1px solid rgba(19, 45, 54, 0.1)' }}>
-                            <p><strong>Analyse:</strong></p>
-                            <p>Geloest: {analytics.solved} Teams</p>
-                            <p>Pending: {analytics.pending} Teams</p>
-                            <p>Fehlerhafte Versuche: {analytics.wrongAttempts}</p>
-                          </div>
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        </>
-      ) : (
-        <div className="stack">
-          <div className="card stack">
-            <div className="section-head">
-              <div>
-                <p className="eyebrow">Freigaben</p>
-                <h2>Uploads und Freitext-Antworten pruefen</h2>
-              </div>
-              <Metric label="Offen" value={pendingApprovals.length} />
-            </div>
-
-            <div className="approval-list">
-              {pendingApprovals.length ? (
-                pendingApprovals.map((approval) => (
-                  <div className="approval-card" key={`${approval.teamId}-${approval.stationId}`}>
-                    <div className="approval-card__head">
-                      <div>
-                        <strong>{approval.teamName}</strong>
-                        <p>
-                          {approval.stationName} - {approval.submittedBy || 'ohne Namen'} -{' '}
-                          {formatTime(approval.submittedAt)}
-                        </p>
-                      </div>
-                      <span className="status-pill locked">wartet</span>
+            <div className="quick-team-list">
+              {filteredAccessCodes.length ? (
+                filteredAccessCodes.map((entry) => (
+                  <div className="quick-team static-card" key={entry.id}>
+                    <div>
+                      <strong>{entry.code}</strong>
+                      <span>{entry.assignedGroupName || 'Noch keiner Gruppe zugeordnet'}</span>
                     </div>
-
-                    {approval.answer ? (
-                      <div className="review-note">
-                        <strong>Antwort</strong>
-                        <p>{approval.answer}</p>
-                      </div>
-                    ) : null}
-
-                    {approval.assetUrl ? (
-                      <div className="approval-preview">
-                        <img alt={approval.assetName || approval.stationName} src={approval.assetUrl} />
-                      </div>
-                    ) : null}
-
-                    <label className="field">
-                      <span>Ablehnungsgrund oder Kommentar</span>
-                      <textarea
-                        onChange={(event) => setReviewNote(approval, event.target.value)}
-                        rows="3"
-                        value={getReviewNote(approval)}
-                      />
-                    </label>
-
-                    {approval.stationType === 'manual' ? (
-                      <label className="field">
-                        <span>Punkte bei Freigabe</span>
-                        <input
-                          defaultValue={approval.stationPoints}
-                          max={approval.stationPoints}
-                          min="0"
-                          ref={(element) => {
-                            const key = `${approval.teamId}:${approval.stationId}`
-
-                            if (element) {
-                              reviewPointInputsRef.current[key] = element
-                              return
-                            }
-
-                            delete reviewPointInputsRef.current[key]
-                          }}
-                          type="number"
-                        />
-                        <small>Maximum: {approval.stationPoints} Punkte</small>
-                      </label>
-                    ) : null}
-
-                    <div className="action-row">
-                      <button
-                        className="primary-button"
-                        onClick={() => {
-                          onReview(
-                            approval.teamId,
-                            approval.stationId,
-                            'approve',
-                            getReviewNote(approval),
-                            approval.stationType === 'manual'
-                              ? Number(getReviewPoints(approval))
-                              : undefined,
-                          )
-                          clearApprovalDraft(approval)
-                        }}
-                        type="button"
-                      >
-                        Freigeben
-                      </button>
-                      <button
-                        className="ghost-button"
-                        onClick={() => {
-                          onReview(approval.teamId, approval.stationId, 'reject', getReviewNote(approval))
-                          clearApprovalDraft(approval)
-                        }}
-                        type="button"
-                      >
-                        Ablehnen
-                      </button>
-                    </div>
+                    <span className={`status-pill ${entry.teamId ? 'solved' : 'open'}`}>
+                      {entry.teamId ? 'vergeben' : 'frei'}
+                    </span>
                   </div>
                 ))
+              ) : accessCodes.length ? (
+                <p className="hint-text">Kein Gruppencode passt zur aktuellen Suche.</p>
               ) : (
-                <p className="hint-text">Aktuell warten keine neuen Einreichungen.</p>
+                <p className="hint-text">Noch keine Gruppencodes erstellt.</p>
               )}
             </div>
           </div>
         </div>
-      )}
+      ) : null}
     </section>
   )
 }

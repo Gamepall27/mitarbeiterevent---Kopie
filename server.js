@@ -17,6 +17,7 @@ import {
   generateAccessCode,
   getEstimatePoints,
   getStationName,
+  getTeamPoints,
   normalizeAnswer,
 } from './src/utils/eventModel.js'
 
@@ -98,6 +99,13 @@ app.post('/api/access/login', (request, response) => {
     return
   }
 
+  if (!matchingCode.teamId) {
+    response.status(409).json({
+      message: 'Dieser Gruppencode muss zuerst mit einem Gruppennamen eingerichtet werden.',
+    })
+    return
+  }
+
   let activeTeamId = matchingCode.teamId
   let nextTab = 'start'
 
@@ -107,26 +115,6 @@ app.post('/api/access/login', (request, response) => {
 
       if (!codeEntry) {
         throw new Error('Gruppencode nicht mehr vorhanden.')
-      }
-
-      if (!codeEntry.teamId) {
-        const newTeam = createEmptyTeam({
-          id: crypto.randomUUID(),
-          code: codeEntry.code,
-          name: codeEntry.assignedGroupName || codeEntry.code,
-          sessionId,
-          started: Boolean(draft.eventStartedAt),
-          startedAt: draft.eventStartedAt ?? null,
-          stations: getStations(draft),
-        })
-
-        codeEntry.teamId = newTeam.id
-        codeEntry.assignedGroupName = newTeam.name
-        codeEntry.activatedAt = new Date().toISOString()
-        draft.teams.push(newTeam)
-        activeTeamId = newTeam.id
-        nextTab = draft.eventStartedAt ? 'missions' : 'start'
-        return
       }
 
       const team = draft.teams.find((entry) => entry.id === codeEntry.teamId)
@@ -161,24 +149,102 @@ app.post('/api/access/login', (request, response) => {
   }
 })
 
-app.post('/api/admin/codes', requireAdmin, (_request, response) => {
-  const codeEntry = {
-    id: crypto.randomUUID(),
-    code: generateAccessCode(),
-    createdAt: new Date().toISOString(),
-    teamId: null,
-    assignedGroupName: '',
-    activatedAt: null,
+app.post('/api/access/register-group', (request, response) => {
+  const state = readState()
+  const identifier = normalizeAnswer(request.body?.code)
+  const requestedGroupName = String(request.body?.groupName ?? '').trim()
+  const matchingCode = state.accessCodes.find(
+    (entry) => normalizeAnswer(entry.code) === identifier,
+  )
+
+  if (!matchingCode) {
+    response.status(404).json({ message: 'Kein gueltiger Gruppencode gefunden.' })
+    return
   }
 
-  const nextState = mutateState((draft) => {
-    draft.accessCodes.unshift(codeEntry)
-  })
+  if (!requestedGroupName) {
+    response.status(400).json({ message: 'Bitte einen Gruppennamen eingeben.' })
+    return
+  }
 
-  respondWithAppState(response, nextState, {
-    code: codeEntry.code,
-    message: `Neuer Gruppencode erstellt: ${codeEntry.code}`,
-  })
+  if (matchingCode.teamId) {
+    response.status(409).json({ message: 'Dieser Gruppencode ist bereits eingerichtet.' })
+    return
+  }
+
+  try {
+    const nextState = mutateState((draft) => {
+      const codeEntry = draft.accessCodes.find((entry) => entry.id === matchingCode.id)
+
+      if (!codeEntry) {
+        throw new Error('Gruppencode nicht mehr vorhanden.')
+      }
+
+      if (codeEntry.teamId) {
+        throw createHttpError(409, 'Dieser Gruppencode ist bereits eingerichtet.')
+      }
+
+      const newTeam = createEmptyTeam({
+        id: crypto.randomUUID(),
+        code: codeEntry.code,
+        name: requestedGroupName,
+        started: Boolean(draft.eventStartedAt),
+        startedAt: draft.eventStartedAt ?? null,
+        stations: getStations(draft),
+      })
+
+      codeEntry.teamId = newTeam.id
+      codeEntry.assignedGroupName = newTeam.name
+      codeEntry.activatedAt = new Date().toISOString()
+      draft.teams.push(newTeam)
+    })
+
+    response.json({
+      appState: toClientAppState(nextState),
+      message: 'Gruppe angelegt. Bitte jetzt mit dem Gruppencode anmelden.',
+    })
+  } catch (error) {
+    response.status(error.statusCode ?? 500).json({
+      message: error.message ?? 'Gruppe konnte nicht angelegt werden.',
+    })
+  }
+})
+
+app.post('/api/admin/codes', requireAdmin, (request, response) => {
+  try {
+    const requestedCode = normalizeAccessCode(request.body?.code)
+    const state = readState()
+
+    if (
+      requestedCode &&
+      state.accessCodes.some((entry) => normalizeAccessCode(entry.code) === requestedCode)
+    ) {
+      response.status(409).json({ message: 'Dieser Gruppencode existiert bereits.' })
+      return
+    }
+
+    const codeEntry = {
+      id: crypto.randomUUID(),
+      code: requestedCode || generateAccessCode(),
+      createdAt: new Date().toISOString(),
+      teamId: null,
+      assignedGroupName: '',
+      activatedAt: null,
+    }
+
+    const nextState = mutateState((draft) => {
+      draft.accessCodes.unshift(codeEntry)
+    })
+
+    respondWithAppState(response, nextState, {
+      code: codeEntry.code,
+      message: `Neuer Gruppencode erstellt: ${codeEntry.code}`,
+    })
+  } catch (error) {
+    response.status(error.statusCode ?? 500).json({
+      message: error.message ?? 'Gruppencode konnte nicht erstellt werden.',
+    })
+  }
 })
 
 app.post('/api/admin/stations', requireAdmin, upload.single('stationImage'), (request, response) => {
@@ -277,6 +343,46 @@ app.post('/api/admin/event/start', requireAdmin, (_request, response) => {
   })
 })
 
+app.post('/api/admin/event/pause', requireAdmin, (_request, response) => {
+  const nextState = mutateState((draft) => {
+    pauseEvent(draft)
+  })
+
+  respondWithAppState(response, nextState, {
+    message: 'Event-Timer pausiert.',
+  })
+})
+
+app.post('/api/admin/event/resume', requireAdmin, (_request, response) => {
+  const nextState = mutateState((draft) => {
+    resumeEvent(draft)
+  })
+
+  respondWithAppState(response, nextState, {
+    message: 'Event-Timer fortgesetzt.',
+  })
+})
+
+app.post('/api/admin/event/stop', requireAdmin, (_request, response) => {
+  const nextState = mutateState((draft) => {
+    stopEvent(draft)
+  })
+
+  respondWithAppState(response, nextState, {
+    message: 'Event-Timer gestoppt.',
+  })
+})
+
+app.post('/api/admin/event/reset', requireAdmin, (_request, response) => {
+  const nextState = mutateState((draft) => {
+    resetEventTimer(draft)
+  })
+
+  respondWithAppState(response, nextState, {
+    message: 'Event-Timer zurueckgesetzt.',
+  })
+})
+
 app.post('/api/team/:teamId/select-station', requireTeamSession, (request, response) => {
   const nextState = mutateState((draft) => {
     const team = requireTeam(draft, request.params.teamId)
@@ -289,6 +395,13 @@ app.post('/api/team/:teamId/select-station', requireTeamSession, (request, respo
 
 app.post('/api/team/:teamId/stations/:stationId/unlock', requireTeamSession, (request, response) => {
   const state = readState()
+  const eventInteractionError = getEventInteractionError(state)
+
+  if (eventInteractionError) {
+    response.status(409).json({ message: eventInteractionError })
+    return
+  }
+
   const stations = getStations(state)
   const station = stations.find((entry) => entry.id === request.params.stationId)
 
@@ -339,55 +452,19 @@ app.post('/api/team/:teamId/stations/:stationId/unlock', requireTeamSession, (re
   })
 })
 
-app.post('/api/team/:teamId/stations/:stationId/buy-hint', requireTeamSession, (request, response) => {
-  const state = readState()
-  const stations = getStations(state)
-  const station = stations.find((entry) => entry.id === request.params.stationId)
-
-  if (!station) {
-    response.status(404).json({ message: 'Station nicht gefunden.' })
-    return
-  }
-
-  const hintId = request.body?.hintId
-
-  if (!hintId) {
-    response.status(400).json({ message: 'Hinweis-ID erforderlich.' })
-    return
-  }
-
-  const hint = station.hints?.find((h) => h.id === hintId)
-
-  if (!hint) {
-    response.status(404).json({ message: 'Hinweis nicht gefunden.' })
-    return
-  }
-
-  const nextState = mutateState((draft) => {
-    const team = requireTeam(draft, request.params.teamId)
-    const progress = team.stationProgress[request.params.stationId]
-    touchTeamSession(team)
-
-    if (!progress.boughtHints) {
-      progress.boughtHints = []
-    }
-
-    if (!progress.boughtHints.includes(hintId)) {
-      progress.boughtHints.push(hintId)
-    }
-  })
-
-  respondWithAppState(response, nextState, {
-    message: `Hinweis gekauft! ${hint.cost} Punkte abgezogen.`,
-  })
-})
-
 app.post(
   '/api/team/:teamId/stations/:stationId/submit',
   requireTeamSession,
   upload.single('file'),
   (request, response) => {
     const state = readState()
+    const eventInteractionError = getEventInteractionError(state)
+
+    if (eventInteractionError) {
+      response.status(409).json({ message: eventInteractionError })
+      return
+    }
+
     const stations = getStations(state)
     const station = stations.find((entry) => entry.id === request.params.stationId)
 
@@ -409,6 +486,13 @@ app.post(
 
         if (progress.status === 'solved') {
           return
+        }
+
+        if (progress.submittedAt) {
+          throw createHttpError(
+            409,
+            'Diese Antwort wurde bereits abgeschickt und kann nicht mehr bearbeitet werden.',
+          )
         }
 
         if (station.type === 'photo') {
@@ -504,61 +588,99 @@ app.get('/api/admin/approvals', requireAdmin, (_request, response) => {
   response.json({ approvals: buildApprovals(readState()) })
 })
 
-app.post('/api/admin/team/:teamId/hint', requireAdmin, upload.single('hintImage'), (request, response) => {
-  const hintText = String(request.body?.text ?? '').trim()
+app.post('/api/admin/team/:teamId/bonus', requireAdmin, (request, response) => {
+  const delta = Number(request.body?.delta ?? 0)
+  const state = readState()
+  const stations = getStations(state)
+  const team = state.teams.find((entry) => entry.id === request.params.teamId)
 
-  if (!hintText && !request.file) {
-    cleanupUploadedFile(request.file)
-    response.status(400).json({ message: 'Bitte zuerst einen Hinweistext oder ein Bild angeben.' })
+  if (!team) {
+    response.status(404).json({ message: 'Team nicht gefunden.' })
     return
   }
 
-  try {
-    const nextState = mutateState((draft) => {
-      const team = requireTeam(draft, request.params.teamId)
-      team.adminHints.unshift({
-        id: crypto.randomUUID(),
-        text: hintText,
-        imageName: request.file?.originalname ?? '',
-        imageUrl: request.file ? `/uploads/${request.file.filename}` : '',
-        createdAt: new Date().toISOString(),
-      })
-
-      const removedHints = team.adminHints.slice(5)
-      removedHints.forEach(cleanupHintAsset)
-      team.adminHints = team.adminHints.slice(0, 5)
-      prependActivity(team, 'Hinweis vom Admin-Team erhalten')
-    })
-
-    respondWithAppState(response, nextState, { message: 'Hinweis an die Gruppe gesendet.' })
-  } catch (error) {
-    cleanupUploadedFile(request.file)
-    response.status(error.statusCode ?? 500).json({
-      message: error.message ?? 'Hinweis konnte nicht gespeichert werden.',
-    })
-  }
-})
-
-app.post('/api/admin/team/:teamId/bonus', requireAdmin, (request, response) => {
-  const delta = Number(request.body?.delta ?? 0)
+  const appliedDelta =
+    delta >= 0 ? delta : -Math.min(Math.abs(delta), getTeamPoints(team, stations))
 
   const nextState = mutateState((draft) => {
-    const team = requireTeam(draft, request.params.teamId)
+    const activeTeam = requireTeam(draft, request.params.teamId)
 
-    if (delta >= 0) {
-      team.bonusPoints += delta
+    if (appliedDelta >= 0) {
+      activeTeam.bonusPoints += appliedDelta
     } else {
-      team.penaltyPoints += Math.abs(delta)
+      activeTeam.penaltyPoints += Math.abs(appliedDelta)
     }
 
     prependActivity(
-      team,
-      `${delta >= 0 ? 'Bonus' : 'Abzug'} von ${Math.abs(delta)} Punkten gesetzt`,
+      activeTeam,
+      `${appliedDelta >= 0 ? 'Bonus' : 'Abzug'} von ${Math.abs(appliedDelta)} Punkten gesetzt`,
     )
   })
 
   respondWithAppState(response, nextState, {
-    message: delta >= 0 ? 'Bonuspunkte gesetzt.' : 'Punkteabzug gesetzt.',
+    message: appliedDelta >= 0 ? 'Bonuspunkte gesetzt.' : 'Punkteabzug gesetzt.',
+  })
+})
+
+app.post('/api/team/:teamId/stations/:stationId/buy-hint', requireTeamSession, (request, response) => {
+  const state = readState()
+  const eventInteractionError = getEventInteractionError(state)
+
+  if (eventInteractionError) {
+    response.status(409).json({ message: eventInteractionError })
+    return
+  }
+
+  const stations = getStations(state)
+  const station = stations.find((entry) => entry.id === request.params.stationId)
+
+  if (!station) {
+    response.status(404).json({ message: 'Station nicht gefunden.' })
+    return
+  }
+
+  const hintId = request.body?.hintId
+
+  if (!hintId) {
+    response.status(400).json({ message: 'Hinweis-ID erforderlich.' })
+    return
+  }
+
+  const hint = station.hints?.find((entry) => entry.id === hintId)
+
+  if (!hint) {
+    response.status(404).json({ message: 'Hinweis nicht gefunden.' })
+    return
+  }
+
+  const team = state.teams.find((entry) => entry.id === request.params.teamId)
+
+  if (!team) {
+    response.status(404).json({ message: 'Team nicht gefunden.' })
+    return
+  }
+
+  if (getTeamPoints(team, stations) < hint.cost) {
+    response.status(400).json({ message: 'Nicht genug Punkte fuer diesen Hinweis.' })
+    return
+  }
+
+  const nextState = mutateState((draft) => {
+    const activeTeam = requireTeam(draft, request.params.teamId)
+    const progress = activeTeam.stationProgress[request.params.stationId]
+    touchTeamSession(activeTeam)
+
+    if (!progress.boughtHints) {
+      progress.boughtHints = []
+    }
+
+    if (!progress.boughtHints.includes(hintId)) {
+      progress.boughtHints.push(hintId)
+    }
+  })
+
+  respondWithAppState(response, nextState, {
+    message: `Hinweis gekauft! ${hint.cost} Punkte abgezogen.`,
   })
 })
 
@@ -615,7 +737,7 @@ app.post(
         return
       }
 
-      progress.status = 'open'
+      progress.status = 'rejected'
       progress.solvedAt = null
       progress.pointsAwarded = 0
       prependActivity(team, `${stationName} abgelehnt`)
@@ -702,10 +824,16 @@ function migrateState(state) {
           .map((team) => team.startedAt)
           .filter(Boolean)
           .sort()[0] ?? null
-  const stations = (Array.isArray(state.stations) ? state.stations : stationCatalog).map((station) => ({
-    ...station,
-    unlockCode: getStationUnlockCode(station, { generateIfMissing: true }),
-  }))
+  const stations = (Array.isArray(state.stations) ? state.stations : stationCatalog).map(
+    (station) => ({
+      ...station,
+      requiresUnlockCode: station.requiresUnlockCode !== false,
+      unlockCode:
+        station.requiresUnlockCode === false
+          ? ''
+          : getStationUnlockCode(station, { generateIfMissing: true }),
+    }),
+  )
 
   return {
     ...state,
@@ -714,6 +842,10 @@ function migrateState(state) {
         ? Math.round(Number(state.eventDurationMinutes))
         : EVENT_DURATION_MINUTES,
     eventStartedAt: migratedEventStartedAt,
+    eventStatus: migrateEventStatus(state.eventStatus, migratedEventStartedAt),
+    eventPausedAt:
+      typeof state.eventPausedAt === 'string' && state.eventPausedAt ? state.eventPausedAt : null,
+    eventPausedDurationMs: Math.max(0, Number(state.eventPausedDurationMs) || 0),
     stations,
     teams: (state.teams ?? []).map((team) => ({
       ...team,
@@ -791,8 +923,11 @@ function isValidAdminCode(code) {
 }
 
 function startEvent(state) {
-  const startedAt = state.eventStartedAt ?? new Date().toISOString()
+  const startedAt = new Date().toISOString()
   state.eventStartedAt = startedAt
+  state.eventStatus = 'running'
+  state.eventPausedAt = null
+  state.eventPausedDurationMs = 0
 
   state.teams.forEach((team) => {
     team.started = true
@@ -800,6 +935,112 @@ function startEvent(state) {
     team.active = true
     prependActivity(team, 'Event-Timer gestartet')
   })
+}
+
+function pauseEvent(state) {
+  if (!state.eventStartedAt || state.eventStatus !== 'running') {
+    return
+  }
+
+  state.eventStatus = 'paused'
+  state.eventPausedAt = new Date().toISOString()
+
+  state.teams.forEach((team) => {
+    prependActivity(team, 'Event-Timer pausiert')
+  })
+}
+
+function resumeEvent(state) {
+  if (!state.eventStartedAt || state.eventStatus !== 'paused' || !state.eventPausedAt) {
+    return
+  }
+
+  const pausedMs = Date.now() - new Date(state.eventPausedAt).getTime()
+  state.eventPausedDurationMs += Math.max(pausedMs, 0)
+  state.eventPausedAt = null
+  state.eventStatus = 'running'
+
+  state.teams.forEach((team) => {
+    prependActivity(team, 'Event-Timer fortgesetzt')
+  })
+}
+
+function stopEvent(state) {
+  if (!state.eventStartedAt || ['idle', 'stopped'].includes(state.eventStatus)) {
+    return
+  }
+
+  if (state.eventStatus === 'paused' && state.eventPausedAt) {
+    const pausedMs = Date.now() - new Date(state.eventPausedAt).getTime()
+    state.eventPausedDurationMs += Math.max(pausedMs, 0)
+  }
+
+  state.eventPausedAt = null
+  state.eventStatus = 'stopped'
+
+  state.teams.forEach((team) => {
+    prependActivity(team, 'Event-Timer gestoppt')
+  })
+}
+
+function resetEventTimer(state) {
+  state.eventStartedAt = null
+  state.eventStatus = 'idle'
+  state.eventPausedAt = null
+  state.eventPausedDurationMs = 0
+
+  state.teams.forEach((team) => {
+    team.started = false
+    team.startedAt = null
+    prependActivity(team, 'Event-Timer zurueckgesetzt')
+  })
+}
+
+function migrateEventStatus(rawStatus, eventStartedAt) {
+  if (!eventStartedAt) {
+    return 'idle'
+  }
+
+  if (['running', 'paused', 'stopped'].includes(rawStatus)) {
+    return rawStatus
+  }
+
+  return 'running'
+}
+
+function getEventInteractionError(state) {
+  const eventStatus = getEffectiveEventStatus(state)
+
+  if (eventStatus === 'idle') {
+    return 'Der Event-Timer wurde noch nicht gestartet.'
+  }
+
+  if (eventStatus === 'paused') {
+    return 'Der Event-Timer ist aktuell pausiert.'
+  }
+
+  if (eventStatus === 'stopped') {
+    return 'Der Event-Timer wurde gestoppt oder ist bereits abgelaufen.'
+  }
+
+  return null
+}
+
+function getEffectiveEventStatus(state) {
+  if (!state.eventStartedAt) {
+    return 'idle'
+  }
+
+  if (state.eventStatus === 'paused' || state.eventStatus === 'stopped') {
+    return state.eventStatus
+  }
+
+  const elapsedMs =
+    Date.now() -
+    new Date(state.eventStartedAt).getTime() -
+    Math.max(0, Number(state.eventPausedDurationMs) || 0)
+
+  return elapsedMs >= state.eventDurationMinutes * 60_000 ? 'stopped' : 'running'
 }
 
 function createHttpError(statusCode, message) {
@@ -816,11 +1057,17 @@ function respondWithAppState(response, state, payload = {}) {
 }
 
 function toClientAppState(state) {
+  const effectiveEventStatus = getEffectiveEventStatus(state)
+
   return {
     ...state,
-    teams: (state.teams ?? []).map(({ currentSessionId: _sessionId, sessionSeenAt: _seenAt, ...team }) => ({
-      ...team,
-    })),
+    eventStatus: effectiveEventStatus,
+    teams: (state.teams ?? []).map((team) => {
+      const publicTeam = { ...team }
+      delete publicTeam.currentSessionId
+      delete publicTeam.sessionSeenAt
+      return publicTeam
+    }),
   }
 }
 
@@ -861,13 +1108,26 @@ function cleanupUploadedFile(file) {
 }
 
 function cleanupTeamUploads(team) {
-  Object.values(team.adminHints ?? []).forEach((hint) => {
-    cleanupHintAsset(hint)
-  })
-
   Object.values(team.stationProgress ?? {}).forEach((progress) => {
     cleanupProgressAsset(progress)
   })
+}
+
+function normalizeAccessCode(value) {
+  const normalized = String(value ?? '').trim().toUpperCase()
+
+  if (!normalized) {
+    return ''
+  }
+
+  if (!/^[A-Z0-9-]{3,32}$/.test(normalized)) {
+    throw createHttpError(
+      400,
+      'Bitte nur Gruppencodes mit 3 bis 32 Zeichen aus Buchstaben, Zahlen oder Bindestrichen verwenden.',
+    )
+  }
+
+  return normalized
 }
 
 function cleanupStateUploads(state) {
@@ -889,48 +1149,80 @@ function cleanupProgressAsset(progress) {
   fs.rm(filePath, { force: true }, () => {})
 }
 
-function cleanupHintAsset(hint) {
-  if (!hint?.imageUrl?.startsWith('/uploads/')) {
-    return
-  }
-
-  const filePath = path.join(uploadsDir, hint.imageUrl.replace('/uploads/', ''))
-  fs.rm(filePath, { force: true }, () => {})
-}
-
 function createStationFromPayload(body, file) {
   const type = String(body?.type ?? 'text')
   const name = String(body?.name ?? '').trim()
   const task = String(body?.task ?? '').trim()
+  const requiresUnlockCode = parseBoolean(body?.requiresUnlockCode, true)
 
   if (!name || !task) {
     throw createHttpError(400, 'Name und Aufgabe sind Pflichtfelder.')
   }
 
-  const choices =
-    type === 'choice'
-      ? String(body?.choicesText ?? '')
-          .split(/\r?\n/)
-          .map((entry) => entry.trim())
-          .filter(Boolean)
-          .map((label, index) => ({
-            id: String.fromCharCode(97 + index),
-            label,
-          }))
-      : undefined
+  let choices
+  let answer = ['photo', 'manual'].includes(type)
+    ? ''
+    : String(body?.answer ?? '').trim()
 
-  if (type === 'choice' && (!choices || choices.length < 2)) {
-    throw createHttpError(400, 'Choice-Aufgaben brauchen mindestens zwei Optionen.')
+  if (type === 'choice') {
+    const rawChoiceOptions = body?.choiceOptions
+    let parsedChoiceOptions = []
+
+    if (Array.isArray(rawChoiceOptions)) {
+      parsedChoiceOptions = rawChoiceOptions
+    } else if (typeof rawChoiceOptions === 'string' && rawChoiceOptions.trim()) {
+      try {
+        parsedChoiceOptions = JSON.parse(rawChoiceOptions)
+      } catch {
+        parsedChoiceOptions = []
+      }
+    }
+
+    if (parsedChoiceOptions.length > 0) {
+      choices = parsedChoiceOptions
+        .map((entry, index) => ({
+          id: String(entry?.id ?? `choice-${index + 1}`),
+          label: String(entry?.label ?? '').trim(),
+          isCorrect: Boolean(entry?.isCorrect),
+        }))
+        .filter((entry) => entry.label)
+
+      if (choices.length < 2) {
+        throw createHttpError(400, 'Multiple-Choice-Aufgaben brauchen mindestens zwei Optionen.')
+      }
+
+      const correctChoices = choices.filter((entry) => entry.isCorrect)
+
+      if (correctChoices.length !== 1) {
+        throw createHttpError(400, 'Bitte genau eine richtige Antwort festlegen.')
+      }
+
+      answer = correctChoices[0].id
+    } else {
+      choices = String(body?.choicesText ?? '')
+        .split(/\r?\n/)
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+        .map((label, index) => ({
+          id: String.fromCharCode(97 + index),
+          label,
+          isCorrect:
+            normalizeAnswer(String(body?.answer ?? '').trim()) === String.fromCharCode(97 + index),
+        }))
+
+      if (choices.length < 2) {
+        throw createHttpError(400, 'Multiple-Choice-Aufgaben brauchen mindestens zwei Optionen.')
+      }
+    }
   }
 
   const unlockCode = normalizeUnlockCode(body?.unlockCode)
-
   let hints = []
   try {
     if (body?.hints) {
       hints = Array.isArray(body.hints) ? body.hints : JSON.parse(body.hints)
     }
-  } catch (error) {
+  } catch {
     // Wenn hints nicht geparst werden können, ist es leer
   }
 
@@ -940,23 +1232,46 @@ function createStationFromPayload(body, file) {
     zone: String(body?.zone ?? 'Allgemein').trim() || 'Allgemein',
     area: String(body?.area ?? 'Custom').trim() || 'Custom',
     type,
+    requiresUnlockCode,
     format: String(body?.format ?? 'Admin-Aufgabe').trim() || 'Admin-Aufgabe',
     mandatory: Boolean(body?.mandatory),
     points: Number(body?.points ?? 0),
     fragment: String(body?.fragment ?? '').trim() || null,
     locationHint: String(body?.locationHint ?? '').trim(),
     task,
-    answer: ['photo', 'manual'].includes(type)
-      ? ''
-      : String(body?.answer ?? '').trim(),
+    answer,
     placeholder: String(body?.placeholder ?? 'Antwort eingeben').trim() || 'Antwort eingeben',
     rewardHint: String(body?.rewardHint ?? '').trim(),
     imageName: file?.originalname ?? '',
     imageUrl: file ? `/uploads/${file.filename}` : '',
-    unlockCode: unlockCode.length === 4 ? unlockCode : generateUnlockCode(),
+    unlockCode: requiresUnlockCode
+      ? unlockCode.length === 4
+        ? unlockCode
+        : generateUnlockCode()
+      : '',
     hints,
     ...(choices ? { choices } : {}),
   }
+}
+
+function parseBoolean(value, fallback = false) {
+  if (typeof value === 'boolean') {
+    return value
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+
+    if (normalized === 'true') {
+      return true
+    }
+
+    if (normalized === 'false') {
+      return false
+    }
+  }
+
+  return fallback
 }
 
 function normalizeUnlockCode(value) {
@@ -968,6 +1283,10 @@ function normalizeUnlockCode(value) {
 }
 
 function getStationUnlockCode(station, options = {}) {
+  if (station?.requiresUnlockCode === false) {
+    return ''
+  }
+
   const normalizedUnlockCode = normalizeUnlockCode(station?.unlockCode)
 
   if (normalizedUnlockCode.length === 4) {
