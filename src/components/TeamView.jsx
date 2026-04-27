@@ -8,7 +8,9 @@ import {
   getTeamStationOrder,
   getVisualStatus,
 } from '../utils/eventModel'
+import LanguageSelect from './LanguageSelect'
 import Metric from './Metric'
+import { getTranslation } from '../i18n'
 
 function TeamView({
   team,
@@ -20,7 +22,9 @@ function TeamView({
   eventPausedAt,
   eventPausedDurationMs,
   eventTimerState,
+  language,
   onLogout,
+  onLanguageChange,
   onSubmitStation,
   onUnlock,
   onBuyHint,
@@ -36,6 +40,7 @@ function TeamView({
     )
   const teamReady = Boolean(eventStartedAt)
   const teamCanPlay = resolvedTimerState.isInteractive
+  const translation = getTranslation(language)
   const orderedStations = getTeamStationOrder(stations, team.id || team.code)
   const selectedStation =
     orderedStations.find((station) => station.id === team.selectedStationId) ??
@@ -46,12 +51,17 @@ function TeamView({
       <section className="team-layout team-layout--simple">
         <div className="team-header card">
           <div>
-            <p className="eyebrow">Team</p>
+            <p className="eyebrow">{translation.common.team}</p>
             <h2>{team.name}</h2>
-            <p className="section-copy">Aktuell sind keine Aufgaben angelegt.</p>
+            <p className="section-copy">{translation.common.noTasks}</p>
           </div>
+          <LanguageSelect
+            label={translation.common.language}
+            language={language}
+            onChange={onLanguageChange}
+          />
           <button className="ghost-button" onClick={onLogout} type="button">
-            Gruppe wechseln
+            {translation.common.switchTeam}
           </button>
         </div>
       </section>
@@ -63,13 +73,13 @@ function TeamView({
     <section className="team-layout team-layout--simple">
       <div className="team-header card">
         <div>
-          <p className="eyebrow">Team</p>
+          <p className="eyebrow">{translation.common.team}</p>
           <h2>{team.name}</h2>
-          <p className="section-copy">Code {team.code}</p>
+          <p className="section-copy">{translation.common.code} {team.code}</p>
         </div>
         <div className="team-header__meta team-header__meta--simple">
           <Metric
-            label={teamReady ? 'Restzeit' : 'Status'}
+            label={teamReady ? translation.common.remainingTime : translation.common.status}
             value={
               teamReady
                 ? formatCountdown(
@@ -77,29 +87,29 @@ function TeamView({
                     now,
                     eventDurationMinutes,
                   )
-                : 'wartet auf Start'
+                : translation.common.waitingForStart
             }
           />
-          <Metric label="Punkte" value={team.metrics.points} />
+          <Metric label={translation.common.points} value={team.metrics.points} />
+          <LanguageSelect
+            label={translation.common.language}
+            language={language}
+            onChange={onLanguageChange}
+          />
           <button className="ghost-button" onClick={onLogout} type="button">
-            Gruppe wechseln
+            {translation.common.switchTeam}
           </button>
         </div>
       </div>
 
       {!teamReady ? (
         <div className="card stack simple-focus">
-          <p className="eyebrow">Start</p>
-          <h3>Noch nicht gestartet</h3>
-          <p className="section-copy">
-            Ihr koennt die Aufgaben schon ansehen. Antworten und Freischaltung
-            sind erst moeglich, sobald das Admin-Team den Event-Timer startet.
-          </p>
+          <p className="eyebrow">{translation.teamView.startEyebrow}</p>
+          <h3>{translation.teamView.notStarted}</h3>
+          <p className="section-copy">{translation.teamView.startInfo}</p>
           <div className="simple-inline">
-            <span className="status-pill open">Code {team.code}</span>
-            <span className="simple-note">
-              Die Aufgabenliste bleibt sichtbar, damit ihr euch vorab orientieren koennt.
-            </span>
+            <span className="status-pill open">{translation.common.code} {team.code}</span>
+            <span className="simple-note">{translation.teamView.startListInfo}</span>
           </div>
         </div>
       ) : null}
@@ -107,10 +117,10 @@ function TeamView({
       <div className="card stack">
         <div className="section-head compact">
           <div>
-            <p className="eyebrow">Aufgaben</p>
-            <h3>Aufgaben ansehen und bearbeiten</h3>
+            <p className="eyebrow">{translation.common.tasks}</p>
+            <h3>{translation.teamView.tasksTitle}</h3>
           </div>
-          <p className="hint-text">Klicke auf eine Aufgabe, um diese anzuzeigen und zu bearbeiten.</p>
+          <p className="hint-text">{translation.teamView.tasksHint}</p>
         </div>
 
         <div className="station-accordion simple-station-list">
@@ -137,11 +147,11 @@ function TeamView({
                   <div>
                     <strong>{station.name}</strong>
                     <p>
-                      {getStationPointsLabel(progress, station)}
+                      {getStationPointsLabel(progress, station, translation)}
                     </p>
                   </div>
                   <span className={`status-pill ${visualStatus}`}>
-                    {getStatusLabel(visualStatus)}
+                    {getStatusLabel(visualStatus, translation.status)}
                   </span>
                 </button>
 
@@ -153,6 +163,7 @@ function TeamView({
                       team={team}
                       teamReady={teamReady}
                       teamCanPlay={teamCanPlay}
+                      language={language}
                       timerStatus={resolvedTimerState.status}
                       onSubmit={onSubmitStation}
                       onUnlock={onUnlock}
@@ -169,7 +180,7 @@ function TeamView({
 
       {team.metrics.fragments.length ? (
         <div className="card reward-panel">
-          <strong>Gesammelte Fragmente</strong>
+          <strong>{translation.common.collectedFragments}</strong>
           <p>{team.metrics.fragments.map((fragment) => fragment.fragment).join(' - ')}</p>
         </div>
       ) : null}
@@ -202,7 +213,7 @@ function TeamView({
           onClick={(event) => event.stopPropagation()}
         >
           <img
-            alt="Vergroesserter Hinweis"
+            alt={translation.common.enlargedHintImage}
             src={expandedHintImage}
             style={{
               maxWidth: '90vw',
@@ -241,14 +252,14 @@ function TeamView({
   )
 }
 
-function getStationPointsLabel(progress, station) {
+function getStationPointsLabel(progress, station, translation) {
   const status = getDisplayProgressStatus(progress)
 
   if (status === 'solved' || status === 'pending') {
-    return `${progress.pointsAwarded ?? 0} / ${station.points} P`
+    return `${progress.pointsAwarded ?? 0} / ${station.points} ${translation.common.pointsSuffix}`
   }
 
-  return `${station.points} P`
+  return `${station.points} ${translation.common.pointsSuffix}`
 }
 
 function StationDetail({
@@ -256,12 +267,14 @@ function StationDetail({
   team,
   teamReady,
   teamCanPlay,
+  language,
   timerStatus,
   onSubmit,
   onUnlock,
   onBuyHint,
   setExpandedHintImage,
 }) {
+  const translation = getTranslation(language)
   const progress = team.stationProgress[station.id]
   const [answer, setAnswer] = useState(progress.answer ?? '')
   const [photoName, setPhotoName] = useState(progress.assetName ?? '')
@@ -327,7 +340,7 @@ function StationDetail({
       {showHints ? (
         <div className="card stack simple-focus">
           <div className="section-head compact">
-            <p className="eyebrow">Verfuegbare Hinweise</p>
+            <p className="eyebrow">{translation.common.availableHints}</p>
           </div>
           <div className="hints-list">
             {station.hints.map((hint, index) => {
@@ -340,14 +353,14 @@ function StationDetail({
               return (
                 <div className="hint-card" key={hint.id}>
                   <div style={{ width: '100%' }}>
-                    <p className="hint-label">Hinweis Stufe {index + 1}</p>
+                    <p className="hint-label">{translation.common.hintLevel} {index + 1}</p>
                     {isAlreadyBought ? (
                       <>
                         <p className="hint-preview">{hint.content}</p>
                         {hint.imageUrl ? (
                         <div style={{ marginTop: '12px', marginBottom: '12px' }}>
                           <img
-                            alt="Hinweis-Bild"
+                            alt={translation.common.enlargedHintImage}
                             src={hint.imageUrl}
                             style={{
                               width: '100%',
@@ -376,10 +389,12 @@ function StationDetail({
                       </>
                     ) : (
                       <p className="hint-preview" style={{ fontStyle: 'italic', color: '#888' }}>
-                        Inhalt sichtbar nach dem Kauf
+                        {translation.common.openHintAfterPurchase}
                       </p>
                     )}
-                    <p className="hint-cost">Kosten: {hint.cost} Punkte</p>
+                    <p className="hint-cost">
+                      {translation.common.hintCost}: {hint.cost} {translation.common.pointsSuffix}
+                    </p>
                   </div>
                   <button
                     className={isAlreadyBought ? 'primary-button secondary' : 'primary-button'}
@@ -389,10 +404,14 @@ function StationDetail({
                         onBuyHint(team.id, station.id, hint.id)
                       }
                     }}
-                    title={!canBuyThisHint ? 'Kaufe zuerst die vorherigen Hinweise' : ''}
+                    title={!canBuyThisHint ? translation.common.buyPreviousHintsFirst : ''}
                     type="button"
                   >
-                    {isAlreadyBought ? 'Gekauft' : canBuyThisHint ? 'Kaufen' : 'Gesperrt'}
+                    {isAlreadyBought
+                      ? translation.common.bought
+                      : canBuyThisHint
+                        ? translation.common.buy
+                        : translation.common.locked}
                   </button>
                 </div>
               )
@@ -403,23 +422,27 @@ function StationDetail({
 
       {!teamReady ? (
         <div className="review-note">
-          <strong>Wartet auf den Start</strong>
-          <p>Der Event-Timer wurde noch nicht gestartet. Das Antwortfeld bleibt bis dahin gesperrt.</p>
+          <strong>{translation.teamView.waitingTitle}</strong>
+          <p>{translation.teamView.waitingBody}</p>
         </div>
       ) : !teamCanPlay ? (
         <div className="review-note">
-          <strong>{timerStatus === 'paused' ? 'Event pausiert' : 'Event gestoppt'}</strong>
+          <strong>
+            {timerStatus === 'paused'
+              ? translation.teamView.pausedTitle
+              : translation.teamView.stoppedTitle}
+          </strong>
           <p>
             {timerStatus === 'paused'
-              ? 'Der Timer ist pausiert. Freischaltungen und Antworten sind aktuell gesperrt.'
-              : 'Der Timer wurde gestoppt. Freischaltungen und Antworten sind nicht mehr moeglich.'}
+              ? translation.teamView.pausedBody
+              : translation.teamView.stoppedBody}
           </p>
         </div>
       ) : !progress.unlocked ? (
         <form className="stack" onSubmit={handleUnlockSubmit}>
           <label className="field">
-            <span>Freischaltcode</span>
-            <small>Den code findet ihr an der jeweiligen station</small>
+            <span>{translation.teamView.unlockCode}</span>
+            <small>{translation.teamView.unlockCodeHint}</small>
             <input
               maxLength="4"
               onChange={(event) =>
@@ -437,31 +460,31 @@ function StationDetail({
             disabled={unlockCode.length !== 4}
             type="submit"
           >
-            Freischalten
+            {translation.teamView.unlock}
           </button>
         </form>
       ) : null}
 
       {progress.status === 'pending' ? (
         <div className="review-note">
-          <strong>Antwort gesendet</strong>
-          <p>Diese Aufgabe wird gerade geprueft und kann nicht mehr bearbeitet werden.</p>
+          <strong>{translation.common.submitted}</strong>
+          <p>{translation.teamView.reviewPending}</p>
         </div>
       ) : null}
 
       {progress.status === 'solved' ? (
         <div className="reward-panel">
-          <strong>Aufgabe erledigt</strong>
+          <strong>{translation.common.taskDone}</strong>
           <p>
             {station.fragment
-              ? `Fragment gesammelt: ${station.fragment}`
-              : 'Diese Aufgabe ist bereits geloest.'}
+              ? `${translation.teamView.fragmentCollected} ${station.fragment}`
+              : translation.teamView.solvedNoFragment}
           </p>
         </div>
       ) : isSubmissionLocked ? (
         <div className="review-note">
-          <strong>Antwort gesendet</strong>
-          <p>Diese Aufgabe wurde bereits abgeschickt und ist jetzt gesperrt.</p>
+          <strong>{translation.common.submitted}</strong>
+          <p>{translation.teamView.submissionLocked}</p>
         </div>
       ) : teamCanPlay && progress.unlocked ? (
         <form className="stack" onSubmit={handleSubmit}>
@@ -482,7 +505,7 @@ function StationDetail({
             </div>
           ) : station.type === 'photo' ? (
             <label className="field">
-              <span>Foto hochladen</span>
+              <span>{translation.common.uploadPhoto}</span>
               <input
                 onChange={(event) => {
                   const nextFile = event.target.files?.[0] ?? null
@@ -495,10 +518,14 @@ function StationDetail({
             </label>
           ) : (
             <label className="field">
-              <span>{['number', 'estimate'].includes(station.type) ? 'Zahl' : 'Antwort'}</span>
+              <span>
+                {['number', 'estimate'].includes(station.type)
+                  ? translation.common.number
+                  : translation.common.answer}
+              </span>
               <input
                 onChange={(event) => setAnswer(event.target.value)}
-                placeholder={station.placeholder ?? 'Antwort'}
+                placeholder={station.placeholder ?? translation.common.answer}
                 type={['number', 'estimate'].includes(station.type) ? 'number' : 'text'}
                 value={answer}
               />
@@ -506,14 +533,14 @@ function StationDetail({
           )}
 
           <button className="primary-button" type="submit">
-            Antwort senden
+            {translation.common.sendAnswer}
           </button>
         </form>
       ) : null}
 
       {progress.reviewNote ? (
         <div className="review-note">
-          <strong>Rueckmeldung</strong>
+          <strong>{translation.common.feedback}</strong>
           <p>{progress.reviewNote}</p>
         </div>
       ) : null}

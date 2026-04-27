@@ -9,6 +9,7 @@ import {
   postMultipart,
 } from './api'
 import AdminView from './components/AdminView'
+import { getTranslation } from './i18n'
 import TeamLogin from './components/TeamLogin'
 import TeamView from './components/TeamView'
 import { stationCatalog } from './data/mockData'
@@ -53,8 +54,10 @@ function App() {
     storedUiState.adminSelectedStationId ?? stationCatalog[0]?.id ?? null,
   )
   const [codeDraft, setCodeDraft] = useState('')
+  const [language, setLanguage] = useState(storedUiState.language ?? 'de')
   const [now, setNow] = useState(() => Date.now())
   const pollingRef = useRef(false)
+  const translation = getTranslation(language)
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000)
@@ -94,6 +97,7 @@ function App() {
         adminSessionCode,
         adminSelectedTeamId,
         adminSelectedStationId,
+        language,
       }),
     )
   }, [
@@ -103,6 +107,7 @@ function App() {
     adminSessionCode,
     adminSelectedTeamId,
     adminSelectedStationId,
+    language,
   ])
 
   async function loadState({ silent = false } = {}) {
@@ -222,8 +227,8 @@ function App() {
     return (
       <div className="app-shell">
         <section className="panel stack narrow-panel">
-          <p className="eyebrow">Laden</p>
-          <h2>Verbindung zur Event-Datenbank wird aufgebaut</h2>
+          <p className="eyebrow">{translation.common.loadingEyebrow}</p>
+          <h2>{translation.common.loadingTitle}</h2>
         </section>
       </div>
     )
@@ -574,8 +579,10 @@ function App() {
           eventStartedAt={eventStartedAt}
           eventStatus={eventStatus}
           eventTimerState={eventTimerState}
+          language={language}
           now={now}
           onLogout={handleTeamLogout}
+          onLanguageChange={setLanguage}
           onSelectStation={handleStationSelect}
           onSubmitStation={handleStationSubmit}
           onUnlock={handleStationUnlock}
@@ -584,7 +591,12 @@ function App() {
           team={activeTeam}
         />
       ) : (
-        <TeamLogin accessCodes={generatedCodes} onLogin={handleAccess} />
+        <TeamLogin
+          accessCodes={generatedCodes}
+          language={language}
+          onLanguageChange={setLanguage}
+          onLogin={handleAccess}
+        />
       )}
     </div>
   )

@@ -159,24 +159,24 @@ export function getVisualStatus(progress) {
   return 'open'
 }
 
-export function getStatusLabel(status) {
+export function getStatusLabel(status, labels = {}) {
   if (status === 'solved') {
-    return 'beantwortet'
+    return labels.solved ?? 'beantwortet'
   }
 
   if (status === 'locked') {
-    return 'wird geprueft'
+    return labels.locked ?? 'wird geprueft'
   }
 
   if (status === 'rejected') {
-    return 'abgelehnt'
+    return labels.rejected ?? 'abgelehnt'
   }
 
   if (status === 'wrong') {
-    return 'falsch beantwortet'
+    return labels.wrong ?? 'falsch beantwortet'
   }
 
-  return 'offen'
+  return labels.open ?? 'offen'
 }
 
 export function getStationName(stationId, stations = stationCatalog) {
