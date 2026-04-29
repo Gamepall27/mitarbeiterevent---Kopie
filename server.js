@@ -12,6 +12,7 @@ import {
   createStationProgress,
   EVENT_DURATION_MINUTES,
   generateUnlockCode,
+  getStationUnlimitedAttempts,
   stationCatalog,
 } from './src/data/mockData.js'
 import {
@@ -313,6 +314,42 @@ app.post('/api/admin/stations', requireAdmin, upload.single('stationImage'), (re
   }
 })
 
+app.post(
+  '/api/admin/stations/:stationId',
+  requireAdmin,
+  upload.single('stationImage'),
+  (request, response) => {
+    try {
+      const nextState = mutateState((draft) => {
+        const stations = getStations(draft)
+        const stationIndex = stations.findIndex((station) => station.id === request.params.stationId)
+
+        if (stationIndex === -1) {
+          throw createHttpError(404, 'Aufgabe nicht gefunden.')
+        }
+
+        const existingStation = stations[stationIndex]
+        const payload = createStationFromPayload(request.body, request.file, existingStation)
+
+        if (request.file && existingStation.imageUrl !== payload.imageUrl) {
+          cleanupStationAsset(existingStation)
+        }
+
+        draft.stations = stations.map((station) =>
+          station.id === request.params.stationId ? payload : station,
+        )
+      })
+
+      respondWithAppState(response, nextState, { message: 'Aufgabe aktualisiert.' })
+    } catch (error) {
+      cleanupUploadedFile(request.file)
+      response.status(error.statusCode ?? 500).json({
+        message: error.message ?? 'Aufgabe konnte nicht aktualisiert werden.',
+      })
+    }
+  },
+)
+
 app.post('/api/admin/stations/:stationId/delete', requireAdmin, (request, response) => {
   const nextState = mutateState((draft) => {
     const stations = getStations(draft)
@@ -522,16 +559,17 @@ app.post(
         const progress = team.stationProgress[station.id]
         const submittedAt = new Date().toISOString()
         const nextAttempts = progress.attempts + 1
+        const unlimitedAttempts = getStationUnlimitedAttempts(station)
         touchTeamSession(team)
 
         if (progress.status === 'solved') {
           return
         }
 
-        if (progress.submittedAt) {
+        if (!unlimitedAttempts && progress.attempts > 0) {
           throw createHttpError(
             409,
-            'Diese Antwort wurde bereits abgeschickt und kann nicht mehr bearbeitet werden.',
+            'Diese Aufgabe erlaubt nur einen Versuch und kann nicht erneut bearbeitet werden.',
           )
         }
 
@@ -540,14 +578,18 @@ app.post(
             throw createHttpError(400, 'Bitte zuerst ein Foto auswaehlen.')
           }
 
+          cleanupProgressAsset(progress)
           progress.status = 'pending'
           progress.attempts = nextAttempts
           progress.submittedAt = submittedAt
+          progress.answer = ''
           progress.assetName = request.file.originalname
           progress.assetUrl = `/uploads/${request.file.filename}`
           progress.submittedBy = submittedBy
           progress.reviewNote = ''
           progress.reviewedAt = null
+          progress.pointsAwarded = 0
+          progress.solvedAt = null
           team.selectedStationId = station.id
           prependActivity(team, `${station.name} zur Freigabe eingereicht`)
           return
@@ -565,6 +607,8 @@ app.post(
           progress.submittedBy = submittedBy
           progress.reviewNote = ''
           progress.reviewedAt = null
+          progress.pointsAwarded = 0
+          progress.solvedAt = null
           team.selectedStationId = station.id
           prependActivity(team, `${station.name} zur Freigabe eingereicht`)
           return
@@ -874,6 +918,7 @@ function migrateState(state) {
   const stations = (Array.isArray(state.stations) ? state.stations : stationCatalog).map(
     (station) => ({
       ...station,
+      unlimitedAttempts: getStationUnlimitedAttempts(station),
       requiresUnlockCode: station.requiresUnlockCode !== false,
       unlockCode:
         station.requiresUnlockCode === false
@@ -1196,11 +1241,14 @@ function cleanupProgressAsset(progress) {
   fs.rm(filePath, { force: true }, () => {})
 }
 
-function createStationFromPayload(body, file) {
-  const type = String(body?.type ?? 'text')
+function createStationFromPayload(body, file, existingStation = null) {
+  const type = String(body?.type ?? existingStation?.type ?? 'text')
   const name = String(body?.name ?? '').trim()
   const task = String(body?.task ?? '').trim()
-  const requiresUnlockCode = parseBoolean(body?.requiresUnlockCode, true)
+  const requiresUnlockCode = parseBoolean(
+    body?.requiresUnlockCode,
+    existingStation?.requiresUnlockCode ?? true,
+  )
 
   if (!name || !task) {
     throw createHttpError(400, 'Name und Aufgabe sind Pflichtfelder.')
@@ -1274,27 +1322,30 @@ function createStationFromPayload(body, file) {
   }
 
   return {
-    id: `task-${crypto.randomUUID().slice(0, 8)}`,
+    id: existingStation?.id ?? `task-${crypto.randomUUID().slice(0, 8)}`,
     name,
-    zone: String(body?.zone ?? 'Allgemein').trim() || 'Allgemein',
-    area: String(body?.area ?? 'Custom').trim() || 'Custom',
+    zone: String(body?.zone ?? existingStation?.zone ?? 'Allgemein').trim() || 'Allgemein',
+    area: String(body?.area ?? existingStation?.area ?? 'Custom').trim() || 'Custom',
     type,
+    unlimitedAttempts: parseBoolean(body?.unlimitedAttempts, type !== 'choice'),
     requiresUnlockCode,
-    format: String(body?.format ?? 'Admin-Aufgabe').trim() || 'Admin-Aufgabe',
-    mandatory: Boolean(body?.mandatory),
-    points: Number(body?.points ?? 0),
-    fragment: String(body?.fragment ?? '').trim() || null,
+    format:
+      String(body?.format ?? existingStation?.format ?? 'Admin-Aufgabe').trim() || 'Admin-Aufgabe',
+    mandatory:
+      body?.mandatory === undefined ? Boolean(existingStation?.mandatory) : Boolean(body?.mandatory),
+    points: Number(body?.points ?? existingStation?.points ?? 0),
+    fragment: String(body?.fragment ?? existingStation?.fragment ?? '').trim() || null,
     locationHint: String(body?.locationHint ?? '').trim(),
     task,
     answer,
     placeholder: String(body?.placeholder ?? 'Antwort eingeben').trim() || 'Antwort eingeben',
     rewardHint: String(body?.rewardHint ?? '').trim(),
-    imageName: file?.originalname ?? '',
-    imageUrl: file ? `/uploads/${file.filename}` : '',
+    imageName: file?.originalname ?? existingStation?.imageName ?? '',
+    imageUrl: file ? `/uploads/${file.filename}` : existingStation?.imageUrl ?? '',
     unlockCode: requiresUnlockCode
       ? unlockCode.length === 4
         ? unlockCode
-        : generateUnlockCode()
+        : getStationUnlockCode(existingStation, { generateIfMissing: true })
       : '',
     hints,
     ...(choices ? { choices } : {}),

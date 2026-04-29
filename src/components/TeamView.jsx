@@ -4,6 +4,7 @@ import {
   formatCountdown,
   getEventTimerState,
   getDisplayProgressStatus,
+  getStationUnlimitedAttempts,
   getStatusLabel,
   getTeamStationOrder,
   getVisualStatus,
@@ -280,9 +281,13 @@ function StationDetail({
   const [photoName, setPhotoName] = useState(progress.assetName ?? '')
   const [photoFile, setPhotoFile] = useState(null)
   const [unlockCode, setUnlockCode] = useState('')
-  const isSubmissionLocked = Boolean(progress.submittedAt)
+  const hasUnlimitedAttempts = getStationUnlimitedAttempts(station)
+  const hasUsedSingleAttempt = !hasUnlimitedAttempts && progress.attempts > 0
+  const isSolved = progress.status === 'solved'
+  const isPendingReview = progress.status === 'pending'
+  const isSubmissionLocked = isSolved || hasUsedSingleAttempt
   const showHints =
-    Boolean(station.hints?.length) && teamCanPlay && progress.status !== 'solved'
+    Boolean(station.hints?.length) && teamCanPlay && !isSolved
 
   function handleSubmit(event) {
     event.preventDefault()
@@ -465,14 +470,18 @@ function StationDetail({
         </form>
       ) : null}
 
-      {progress.status === 'pending' ? (
+      {isPendingReview ? (
         <div className="review-note">
           <strong>{translation.common.submitted}</strong>
-          <p>{translation.teamView.reviewPending}</p>
+          <p>
+            {hasUnlimitedAttempts
+              ? translation.teamView.reviewPendingEditable
+              : translation.teamView.reviewPending}
+          </p>
         </div>
       ) : null}
 
-      {progress.status === 'solved' ? (
+      {isSolved ? (
         <div className="reward-panel">
           <strong>{translation.common.taskDone}</strong>
           <p>

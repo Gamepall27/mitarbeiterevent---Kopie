@@ -462,16 +462,14 @@ function App() {
     })
   }
 
-  function handleCreateStation(payload) {
-    if (!(payload.stationImage instanceof File)) {
-      const { stationImage: _ignored, ...jsonPayload } = payload
-      applyMutation(() => postJson('/api/admin/stations', jsonPayload, requireAdminCode()))
-      return
-    }
-
+  function buildStationFormData(payload) {
     const formData = new FormData()
 
     Object.entries(payload).forEach(([key, value]) => {
+      if (key === 'id' || key === 'existingImageName' || key === 'existingImageUrl') {
+        return
+      }
+
       if (value === undefined || value === null || value === '') {
         return
       }
@@ -494,7 +492,47 @@ function App() {
       formData.set(key, String(value))
     })
 
+    return formData
+  }
+
+  function handleCreateStation(payload) {
+    if (!(payload.stationImage instanceof File)) {
+      const {
+        stationImage: _ignored,
+        id: _id,
+        existingImageName: _existingImageName,
+        existingImageUrl: _existingImageUrl,
+        ...jsonPayload
+      } = payload
+      applyMutation(() => postJson('/api/admin/stations', jsonPayload, requireAdminCode()))
+      return
+    }
+
+    const formData = buildStationFormData(payload)
+
     applyMutation(() => postMultipart('/api/admin/stations', formData, requireAdminCode()))
+  }
+
+  function handleUpdateStation(stationId, payload) {
+    if (!(payload.stationImage instanceof File)) {
+      const {
+        stationImage: _ignored,
+        id: _id,
+        existingImageName: _existingImageName,
+        existingImageUrl: _existingImageUrl,
+        ...jsonPayload
+      } = payload
+      applyMutation(() =>
+        postJson(`/api/admin/stations/${stationId}`, jsonPayload, requireAdminCode()),
+      )
+      return
+    }
+
+    const formData = buildStationFormData(payload)
+
+    applyMutation(() =>
+      postMultipart(`/api/admin/stations/${stationId}`, formData, requireAdminCode()),
+    )
   }
 
   function handleDeleteStation(stationId) {
@@ -566,6 +604,7 @@ function App() {
           onStartEvent={handleAdminStartEvent}
           onStopEvent={handleAdminStopEvent}
           onToggleActive={handleAdminToggleActive}
+          onUpdateStation={handleUpdateStation}
           pendingApprovals={pendingApprovals}
           rankedTeams={rankedTeams}
           stations={appState.stations}

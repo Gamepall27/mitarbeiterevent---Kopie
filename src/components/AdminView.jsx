@@ -20,8 +20,10 @@ function createEmptyChoiceOption() {
 
 function createEmptyStationDraft() {
   return {
+    id: null,
     name: '',
     type: 'text',
+    unlimitedAttempts: true,
     points: 50,
     requiresUnlockCode: true,
     task: '',
@@ -35,6 +37,38 @@ function createEmptyStationDraft() {
     stationImage: null,
     unlockCode: '',
     hints: [],
+    existingImageName: '',
+    existingImageUrl: '',
+  }
+}
+
+function createStationDraftFromStation(station) {
+  return {
+    id: station.id,
+    name: station.name ?? '',
+    type: station.type ?? 'text',
+    unlimitedAttempts: station.unlimitedAttempts ?? station.type !== 'choice',
+    points: station.points ?? 0,
+    requiresUnlockCode: station.requiresUnlockCode !== false,
+    task: station.task ?? '',
+    answer: station.type === 'choice' ? '' : station.answer ?? '',
+    placeholder: station.placeholder ?? 'Antwort eingeben',
+    locationHint: station.locationHint ?? '',
+    rewardHint: station.rewardHint ?? '',
+    fragment: station.fragment ?? '',
+    choiceOptions:
+      station.type === 'choice' && Array.isArray(station.choices) && station.choices.length
+        ? station.choices.map((choice) => ({ id: choice.id, label: choice.label }))
+        : [createEmptyChoiceOption(), createEmptyChoiceOption()],
+    correctChoiceId:
+      station.type === 'choice' && Array.isArray(station.choices)
+        ? station.choices.find((choice) => choice.id === station.answer)?.id ?? ''
+        : '',
+    stationImage: null,
+    unlockCode: station.unlockCode ?? '',
+    hints: Array.isArray(station.hints) ? station.hints : [],
+    existingImageName: station.imageName ?? '',
+    existingImageUrl: station.imageUrl ?? '',
   }
 }
 
@@ -82,6 +116,7 @@ function AdminView({
   onReset,
   onCreateCode,
   onCreateStation,
+  onUpdateStation,
   onDeleteStation,
   onDeleteTeam,
   onLogout,
@@ -182,6 +217,13 @@ function AdminView({
     delete reviewPointInputsRef.current[key]
   }
 
+  function resetStationDraft() {
+    setStationDraft(createEmptyStationDraft())
+    setHintTextDraft('')
+    setHintImageDraft(null)
+    setHintCostDraft('5')
+  }
+
   function handleCreateStation(event) {
     event.preventDefault()
 
@@ -196,15 +238,19 @@ function AdminView({
             .filter((option) => option.label)
         : []
 
-    onCreateStation({
+    const payload = {
       ...stationDraft,
       points: Number(stationDraft.points),
       choiceOptions: normalizedChoiceOptions,
-    })
-    setStationDraft(createEmptyStationDraft())
-    setHintTextDraft('')
-    setHintImageDraft(null)
-    setHintCostDraft('5')
+    }
+
+    if (stationDraft.id) {
+      onUpdateStation(stationDraft.id, payload)
+    } else {
+      onCreateStation(payload)
+    }
+
+    resetStationDraft()
   }
 
   function handleTimerSubmit(event) {
@@ -216,6 +262,15 @@ function AdminView({
     event.preventDefault()
     onCreateCode(accessCodeInput)
     setAccessCodeInput('')
+  }
+
+  function handleEditStation(station) {
+    setTab('tasks')
+    setSelectedAnalysisStationId(station.id)
+    setStationDraft(createStationDraftFromStation(station))
+    setHintTextDraft('')
+    setHintImageDraft(null)
+    setHintCostDraft('5')
   }
 
   return (
@@ -448,8 +503,13 @@ function AdminView({
               <div className="section-head compact">
                 <div>
                   <p className="eyebrow">Aufgabenverwaltung</p>
-                  <h2>Neue Aufgabe anlegen</h2>
+                  <h2>{stationDraft.id ? 'Aufgabe bearbeiten' : 'Neue Aufgabe anlegen'}</h2>
                 </div>
+                {stationDraft.id ? (
+                  <button className="ghost-button" onClick={resetStationDraft} type="button">
+                    Bearbeitung abbrechen
+                  </button>
+                ) : null}
               </div>
 
               <form className="stack" onSubmit={handleCreateStation}>
@@ -473,7 +533,12 @@ function AdminView({
                           const nextType = event.target.value
 
                           if (nextType !== 'choice') {
-                            return { ...current, type: nextType }
+                            return {
+                              ...current,
+                              type: nextType,
+                              unlimitedAttempts:
+                                current.type === 'choice' ? true : current.unlimitedAttempts,
+                            }
                           }
 
                           const choiceOptions =
@@ -485,6 +550,8 @@ function AdminView({
                             ...current,
                             type: nextType,
                             answer: '',
+                            unlimitedAttempts:
+                              current.type === 'choice' ? current.unlimitedAttempts : false,
                             choiceOptions,
                             correctChoiceId: current.correctChoiceId,
                           }
@@ -533,6 +600,26 @@ function AdminView({
                   </label>
                   <small>
                     Wenn deaktiviert, ist die Aufgabe fuer Spieler sofort verfuegbar.
+                  </small>
+                </label>
+
+                <label className="field">
+                  <span>Versuche</span>
+                  <label style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                    <input
+                      checked={stationDraft.unlimitedAttempts}
+                      onChange={(event) =>
+                        setStationDraft((current) => ({
+                          ...current,
+                          unlimitedAttempts: event.target.checked,
+                        }))
+                      }
+                      type="checkbox"
+                    />
+                    <span>Unendlich viele Versuche erlauben</span>
+                  </label>
+                  <small>
+                    Deaktiviert bedeutet: genau ein Versuch, danach ist die Aufgabe gesperrt.
                   </small>
                 </label>
 
@@ -673,6 +760,9 @@ function AdminView({
                     }
                     type="file"
                   />
+                  {stationDraft.existingImageName && !stationDraft.stationImage ? (
+                    <small>Aktuell: {stationDraft.existingImageName}</small>
+                  ) : null}
                   {stationDraft.stationImage ? <small>{stationDraft.stationImage.name}</small> : null}
                 </label>
 
@@ -816,7 +906,7 @@ function AdminView({
                 </button>
 
                 <button className="primary-button" type="submit">
-                  Aufgabe speichern
+                  {stationDraft.id ? 'Aenderungen speichern' : 'Aufgabe speichern'}
                 </button>
               </form>
             </div>
@@ -860,6 +950,13 @@ function AdminView({
                                 <h3>{station.name}</h3>
                               </div>
                               <button
+                                className="ghost-button"
+                                onClick={() => handleEditStation(station)}
+                                type="button"
+                              >
+                                Bearbeiten
+                              </button>
+                              <button
                                 className="ghost-button danger-button"
                                 onClick={() => onDeleteStation(station.id)}
                                 type="button"
@@ -872,6 +969,11 @@ function AdminView({
                               <div className="task-meta">
                                 <span>{station.type}</span>
                                 <span>{station.points} Punkte</span>
+                                <span>
+                                  {station.requiresUnlockCode !== false
+                                    ? `Code: ${station.unlockCode || 'nicht gesetzt'}`
+                                    : 'ohne Freischaltcode'}
+                                </span>
                               </div>
 
                               {station.imageUrl ? (

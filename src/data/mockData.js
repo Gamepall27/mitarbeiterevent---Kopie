@@ -299,6 +299,14 @@ export function createStationProgress(
   }, base)
 }
 
+export function getStationUnlimitedAttempts(station) {
+  if (typeof station?.unlimitedAttempts === 'boolean') {
+    return station.unlimitedAttempts
+  }
+
+  return station?.type !== 'choice'
+}
+
 export function createEmptyTeam({
   id,
   code,

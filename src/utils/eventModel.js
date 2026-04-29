@@ -183,6 +183,14 @@ export function getStationName(stationId, stations = stationCatalog) {
   return stations.find((station) => station.id === stationId)?.name ?? 'Unbekannt'
 }
 
+export function getStationUnlimitedAttempts(station) {
+  if (typeof station?.unlimitedAttempts === 'boolean') {
+    return station.unlimitedAttempts
+  }
+
+  return station?.type !== 'choice'
+}
+
 export function formatTime(dateString) {
   if (!dateString) {
     return 'offen'

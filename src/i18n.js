@@ -76,8 +76,10 @@ const translations = {
       unlock: 'Freischalten',
       reviewPending:
         'Diese Aufgabe wird gerade geprueft und kann nicht mehr bearbeitet werden.',
+      reviewPendingEditable:
+        'Diese Aufgabe wird gerade geprueft. Ihr koennt die Abgabe aber noch anpassen und erneut senden.',
       submissionLocked:
-        'Diese Aufgabe wurde bereits abgeschickt und ist jetzt gesperrt.',
+        'Diese Aufgabe ist gesperrt und kann nicht erneut bearbeitet werden.',
       solvedNoFragment: 'Diese Aufgabe ist bereits geloest.',
       fragmentCollected: 'Fragment gesammelt:',
     },
@@ -161,8 +163,10 @@ const translations = {
       unlock: 'Unlock',
       reviewPending:
         'This task is currently under review and can no longer be edited.',
+      reviewPendingEditable:
+        'This task is currently under review. You can still update and submit it again.',
       submissionLocked:
-        'This answer has already been submitted and is now locked.',
+        'This task is locked and can no longer be edited.',
       solvedNoFragment: 'This task has already been solved.',
       fragmentCollected: 'Fragment collected:',
     },
