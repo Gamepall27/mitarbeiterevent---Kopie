@@ -3,6 +3,7 @@ import multer from 'multer'
 import Database from 'better-sqlite3'
 import fs from 'node:fs'
 import path from 'node:path'
+import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import {
   ADMIN_CODE,
@@ -24,9 +25,20 @@ import {
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const dataDir = path.join(__dirname, 'server-data')
+const distDir = path.join(__dirname, 'dist')
 const uploadsDir = path.join(dataDir, 'uploads')
 const TEAM_SESSION_TIMEOUT_MS = 45_000
 const ADMIN_PORTAL_ACCESS_CODE = 'Admin123'
+const DEFAULT_ALLOWED_ORIGINS = [
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'http://localhost:4173',
+  'http://localhost:5173',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:3001',
+  'http://127.0.0.1:4173',
+  'http://127.0.0.1:5173',
+]
 
 fs.mkdirSync(uploadsDir, { recursive: true })
 
@@ -41,6 +53,34 @@ db.exec(`
 
 const upload = multer({ dest: uploadsDir })
 const app = express()
+const allowedOrigins = new Set(
+  [
+    ...DEFAULT_ALLOWED_ORIGINS,
+    ...String(process.env.ALLOWED_ORIGINS ?? '')
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean),
+  ],
+)
+
+app.use((request, response, next) => {
+  const origin = request.headers.origin
+
+  if (origin && allowedOrigins.has(origin)) {
+    response.setHeader('Access-Control-Allow-Origin', origin)
+    response.setHeader('Vary', 'Origin')
+  }
+
+  response.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-admin-code, x-team-id, x-team-session')
+  response.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
+
+  if (request.method === 'OPTIONS') {
+    response.sendStatus(204)
+    return
+  }
+
+  next()
+})
 
 app.use(express.json({ limit: '10mb' }))
 app.use('/uploads', express.static(uploadsDir))
@@ -772,6 +812,13 @@ app.post('/api/admin/reset', requireAdmin, (_request, response) => {
   writeState(nextState)
   respondWithAppState(response, nextState, { message: 'Daten zurueckgesetzt.' })
 })
+
+if (fs.existsSync(path.join(distDir, 'index.html'))) {
+  app.use(express.static(distDir))
+  app.get(/^(?!\/api(?:\/|$)|\/uploads(?:\/|$)).*/, (_request, response) => {
+    response.sendFile(path.join(distDir, 'index.html'))
+  })
+}
 
 const port = Number(globalThis.process?.env?.PORT ?? 3001)
 app.listen(port, '0.0.0.0', () => {
