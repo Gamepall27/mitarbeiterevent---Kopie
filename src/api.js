@@ -1,3 +1,79 @@
+const API_BASE_URL = String(import.meta.env.VITE_API_URL ?? '').trim().replace(/\/+$/, '')
+
+function withLeadingSlash(value) {
+  return value.startsWith('/') ? value : `/${value}`
+}
+
+export function apiPath(path) {
+  const normalizedPath = withLeadingSlash(path)
+  return API_BASE_URL ? `${API_BASE_URL}${normalizedPath}` : normalizedPath
+}
+
+export function resolveAssetUrl(url) {
+  const normalizedUrl = String(url ?? '').trim()
+
+  if (!normalizedUrl) {
+    return ''
+  }
+
+  if (/^(?:https?:)?\/\//.test(normalizedUrl) || normalizedUrl.startsWith('data:')) {
+    return normalizedUrl
+  }
+
+  return API_BASE_URL ? `${API_BASE_URL}${withLeadingSlash(normalizedUrl)}` : normalizedUrl
+}
+
+function normalizeHint(hint) {
+  return {
+    ...hint,
+    imageUrl: resolveAssetUrl(hint.imageUrl),
+  }
+}
+
+function normalizeStation(station) {
+  return {
+    ...station,
+    imageUrl: resolveAssetUrl(station.imageUrl),
+    hints: Array.isArray(station.hints) ? station.hints.map(normalizeHint) : [],
+  }
+}
+
+function normalizeTeam(team) {
+  const stationProgress = Object.fromEntries(
+    Object.entries(team.stationProgress ?? {}).map(([stationId, progress]) => [
+      stationId,
+      {
+        ...progress,
+        assetUrl: resolveAssetUrl(progress.assetUrl),
+      },
+    ]),
+  )
+
+  return {
+    ...team,
+    stationProgress,
+  }
+}
+
+function normalizePayload(payload) {
+  if (!payload?.appState) {
+    return payload
+  }
+
+  return {
+    ...payload,
+    appState: {
+      ...payload.appState,
+      stations: Array.isArray(payload.appState.stations)
+        ? payload.appState.stations.map(normalizeStation)
+        : [],
+      teams: Array.isArray(payload.appState.teams)
+        ? payload.appState.teams.map(normalizeTeam)
+        : [],
+    },
+  }
+}
+
 function buildHeaders({ adminCode, teamSession } = {}, contentType = 'application/json') {
   return {
     ...(contentType ? { 'Content-Type': contentType } : {}),
@@ -14,11 +90,11 @@ async function parseResponse(response) {
     throw new Error(payload.message ?? 'Anfrage fehlgeschlagen.')
   }
 
-  return payload
+  return normalizePayload(payload)
 }
 
 export async function fetchAppState(adminCode, teamSession) {
-  const response = await fetch('/api/state', {
+  const response = await fetch(apiPath('/api/state'), {
     headers: buildHeaders({ adminCode, teamSession }, null),
   })
 
@@ -26,7 +102,7 @@ export async function fetchAppState(adminCode, teamSession) {
 }
 
 export async function loginAdmin(code) {
-  const response = await fetch('/api/admin/login', {
+  const response = await fetch(apiPath('/api/admin/login'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code }),
@@ -36,7 +112,7 @@ export async function loginAdmin(code) {
 }
 
 export async function loginWithCode(payload) {
-  const response = await fetch('/api/access/login', {
+  const response = await fetch(apiPath('/api/access/login'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -46,7 +122,7 @@ export async function loginWithCode(payload) {
 }
 
 export async function registerGroupWithCode(payload) {
-  const response = await fetch('/api/access/register-group', {
+  const response = await fetch(apiPath('/api/access/register-group'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -56,7 +132,7 @@ export async function registerGroupWithCode(payload) {
 }
 
 export async function postJson(url, body, adminCode, teamSession) {
-  const response = await fetch(url, {
+  const response = await fetch(apiPath(url), {
     method: 'POST',
     headers: buildHeaders({ adminCode, teamSession }),
     body: JSON.stringify(body),
@@ -66,7 +142,7 @@ export async function postJson(url, body, adminCode, teamSession) {
 }
 
 export async function postMultipart(url, body, adminCode, teamSession) {
-  const response = await fetch(url, {
+  const response = await fetch(apiPath(url), {
     method: 'POST',
     headers: buildHeaders({ adminCode, teamSession }, null),
     body,
@@ -76,7 +152,7 @@ export async function postMultipart(url, body, adminCode, teamSession) {
 }
 
 export async function fetchApprovals(adminCode) {
-  const response = await fetch('/api/admin/approvals', {
+  const response = await fetch(apiPath('/api/admin/approvals'), {
     headers: { 'x-admin-code': adminCode },
   })
 

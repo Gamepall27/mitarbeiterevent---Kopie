@@ -4,6 +4,21 @@
 
 Folge einfach der **`DEPLOYMENT_CHECKLIST.md`** Schritt-für-Schritt.
 
+## Wichtiger Hinweis fuer Apache / statisches Hosting
+
+Nur `dist/` per Apache hochzuladen reicht fuer diese App nicht aus. Das Frontend braucht das Node-Backend aus `server.js`, weil alle Daten ueber `/api/...` und `/uploads/...` geladen werden.
+
+Es gibt dafuer genau zwei saubere Deployment-Varianten:
+
+1. Frontend und Backend zusammen ueber Node/Express betreiben.
+   `npm install`
+   `npm run build`
+   `npm start`
+
+2. `dist/` statisch per Apache ausliefern und das Node-Backend separat starten.
+   Dann muss im Frontend beim Build `VITE_API_URL` auf die Backend-URL zeigen, z. B. `http://178.105.50.197:3001`.
+   Alternativ muss Apache `/api` und `/uploads` per Reverse Proxy an Node weiterleiten.
+
 ### 🚀 Quick Start (wenn du es schon kennst)
 
 ```bash
