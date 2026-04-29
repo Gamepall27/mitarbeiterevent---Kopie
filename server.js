@@ -1,6 +1,8 @@
 import express from 'express'
 import multer from 'multer'
 import Database from 'better-sqlite3'
+import { Buffer } from 'node:buffer'
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
@@ -52,7 +54,18 @@ db.exec(`
   )
 `)
 
-const upload = multer({ dest: uploadsDir })
+const upload = multer({
+  dest: uploadsDir,
+  limits: {
+    fileSize: 8 * 1024 * 1024,
+    files: 16,
+  },
+})
+const adminAssetUpload = upload.fields([
+  { name: 'stationImage', maxCount: 1 },
+  { name: 'hintImages', maxCount: 12 },
+])
+const teamSubmissionUpload = upload.single('file')
 const app = express()
 const allowedOrigins = new Set(
   [
@@ -83,7 +96,7 @@ app.use((request, response, next) => {
   next()
 })
 
-app.use(express.json({ limit: '10mb' }))
+app.use(express.json({ limit: '1mb' }))
 app.use('/uploads', express.static(uploadsDir))
 
 initializeState()
@@ -107,10 +120,14 @@ app.get('/api/state', (request, response) => {
     return
   }
 
-  const nextState = mutateState((draft) => {
-    const activeTeam = requireTeam(draft, teamSession.teamId)
-    touchTeamSession(activeTeam)
-  })
+  const sessionAgeMs = Date.now() - new Date(team.sessionSeenAt).getTime()
+  const nextState =
+    Number.isFinite(sessionAgeMs) && sessionAgeMs < 15_000
+      ? state
+      : mutateState((draft) => {
+          const activeTeam = requireTeam(draft, teamSession.teamId)
+          touchTeamSession(activeTeam)
+        })
 
   response.json({
     appState: toClientAppState(nextState),
@@ -288,9 +305,9 @@ app.post('/api/admin/codes', requireAdmin, (request, response) => {
   }
 })
 
-app.post('/api/admin/stations', requireAdmin, upload.single('stationImage'), (request, response) => {
+app.post('/api/admin/stations', requireAdmin, adminAssetUpload, (request, response) => {
   try {
-    const payload = createStationFromPayload(request.body, request.file)
+    const payload = createStationFromPayload(request.body, request.files)
 
     const nextState = mutateState((draft) => {
       const stations = getStations(draft)
@@ -307,7 +324,7 @@ app.post('/api/admin/stations', requireAdmin, upload.single('stationImage'), (re
 
     respondWithAppState(response, nextState, { message: 'Aufgabe hinzugefuegt.' })
   } catch (error) {
-    cleanupUploadedFile(request.file)
+    cleanupUploadedFiles(request.files)
     response.status(error.statusCode ?? 500).json({
       message: error.message ?? 'Aufgabe konnte nicht angelegt werden.',
     })
@@ -317,7 +334,7 @@ app.post('/api/admin/stations', requireAdmin, upload.single('stationImage'), (re
 app.post(
   '/api/admin/stations/:stationId',
   requireAdmin,
-  upload.single('stationImage'),
+  adminAssetUpload,
   (request, response) => {
     try {
       const nextState = mutateState((draft) => {
@@ -329,11 +346,9 @@ app.post(
         }
 
         const existingStation = stations[stationIndex]
-        const payload = createStationFromPayload(request.body, request.file, existingStation)
+        const payload = createStationFromPayload(request.body, request.files, existingStation)
 
-        if (request.file && existingStation.imageUrl !== payload.imageUrl) {
-          cleanupStationAsset(existingStation)
-        }
+        cleanupReplacedStationAssets(existingStation, payload)
 
         draft.stations = stations.map((station) =>
           station.id === request.params.stationId ? payload : station,
@@ -342,7 +357,7 @@ app.post(
 
       respondWithAppState(response, nextState, { message: 'Aufgabe aktualisiert.' })
     } catch (error) {
-      cleanupUploadedFile(request.file)
+      cleanupUploadedFiles(request.files)
       response.status(error.statusCode ?? 500).json({
         message: error.message ?? 'Aufgabe konnte nicht aktualisiert werden.',
       })
@@ -356,6 +371,7 @@ app.post('/api/admin/stations/:stationId/delete', requireAdmin, (request, respon
     const stationToDelete = stations.find((station) => station.id === request.params.stationId)
     draft.stations = stations.filter((station) => station.id !== request.params.stationId)
     cleanupStationAsset(stationToDelete)
+    cleanupHintAssets(stationToDelete?.hints)
 
     draft.teams = draft.teams.map((team) => {
       cleanupProgressAsset(team.stationProgress[request.params.stationId])
@@ -532,7 +548,7 @@ app.post('/api/team/:teamId/stations/:stationId/unlock', requireTeamSession, (re
 app.post(
   '/api/team/:teamId/stations/:stationId/submit',
   requireTeamSession,
-  upload.single('file'),
+  teamSubmissionUpload,
   (request, response) => {
     const state = readState()
     const eventInteractionError = getEventInteractionError(state)
@@ -918,6 +934,7 @@ function migrateState(state) {
   const stations = (Array.isArray(state.stations) ? state.stations : stationCatalog).map(
     (station) => ({
       ...station,
+      hints: migrateStationHints(station.hints),
       unlimitedAttempts: getStationUnlimitedAttempts(station),
       requiresUnlockCode: station.requiresUnlockCode !== false,
       unlockCode:
@@ -1199,6 +1216,19 @@ function cleanupUploadedFile(file) {
   fs.rm(file.path, { force: true }, () => {})
 }
 
+function cleanupUploadedFiles(files) {
+  if (!files) {
+    return
+  }
+
+  if (Array.isArray(files)) {
+    files.forEach(cleanupUploadedFile)
+    return
+  }
+
+  Object.values(files).flat().forEach(cleanupUploadedFile)
+}
+
 function cleanupTeamUploads(team) {
   Object.values(team.stationProgress ?? {}).forEach((progress) => {
     cleanupProgressAsset(progress)
@@ -1229,6 +1259,7 @@ function cleanupStateUploads(state) {
 
   Object.values(getStations(state) ?? []).forEach((station) => {
     cleanupStationAsset(station)
+    cleanupHintAssets(station.hints)
   })
 }
 
@@ -1241,7 +1272,7 @@ function cleanupProgressAsset(progress) {
   fs.rm(filePath, { force: true }, () => {})
 }
 
-function createStationFromPayload(body, file, existingStation = null) {
+function createStationFromPayload(body, files, existingStation = null) {
   const type = String(body?.type ?? existingStation?.type ?? 'text')
   const name = String(body?.name ?? '').trim()
   const task = String(body?.task ?? '').trim()
@@ -1321,6 +1352,26 @@ function createStationFromPayload(body, file, existingStation = null) {
     // Wenn hints nicht geparst werden können, ist es leer
   }
 
+  const stationImageFile = files?.stationImage?.[0] ?? null
+  const normalizedHints = hints.map((hint) => {
+    const hintId = String(hint?.id ?? crypto.randomUUID())
+    const replacementFile =
+      (files?.hintImages ?? []).find((file) => String(file.originalname).startsWith(`${hintId}__`)) ?? null
+    const existingHint = existingStation?.hints?.find((entry) => entry.id === hintId)
+
+    return {
+      id: hintId,
+      content: String(hint?.content ?? '').trim(),
+      cost: Math.max(0, Number(hint?.cost ?? 0) || 0),
+      imageName: replacementFile
+        ? replacementFile.originalname.replace(`${hintId}__`, '')
+        : String(hint?.imageName ?? existingHint?.imageName ?? ''),
+      imageUrl: replacementFile
+        ? `/uploads/${replacementFile.filename}`
+        : String(hint?.imageUrl ?? existingHint?.imageUrl ?? ''),
+    }
+  })
+
   return {
     id: existingStation?.id ?? `task-${crypto.randomUUID().slice(0, 8)}`,
     name,
@@ -1340,14 +1391,14 @@ function createStationFromPayload(body, file, existingStation = null) {
     answer,
     placeholder: String(body?.placeholder ?? 'Antwort eingeben').trim() || 'Antwort eingeben',
     rewardHint: String(body?.rewardHint ?? '').trim(),
-    imageName: file?.originalname ?? existingStation?.imageName ?? '',
-    imageUrl: file ? `/uploads/${file.filename}` : existingStation?.imageUrl ?? '',
+    imageName: stationImageFile?.originalname ?? existingStation?.imageName ?? '',
+    imageUrl: stationImageFile ? `/uploads/${stationImageFile.filename}` : existingStation?.imageUrl ?? '',
     unlockCode: requiresUnlockCode
       ? unlockCode.length === 4
         ? unlockCode
         : getStationUnlockCode(existingStation, { generateIfMissing: true })
       : '',
-    hints,
+    hints: normalizedHints,
     ...(choices ? { choices } : {}),
   }
 }
@@ -1411,6 +1462,77 @@ function cleanupStationAsset(station) {
 
   const filePath = path.join(uploadsDir, station.imageUrl.replace('/uploads/', ''))
   fs.rm(filePath, { force: true }, () => {})
+}
+
+function cleanupHintAssets(hints = []) {
+  hints.forEach((hint) => {
+    if (!hint?.imageUrl?.startsWith('/uploads/')) {
+      return
+    }
+
+    const filePath = path.join(uploadsDir, hint.imageUrl.replace('/uploads/', ''))
+    fs.rm(filePath, { force: true }, () => {})
+  })
+}
+
+function cleanupReplacedStationAssets(existingStation, nextStation) {
+  if (existingStation.imageUrl !== nextStation.imageUrl) {
+    cleanupStationAsset(existingStation)
+  }
+
+  const nextHintUrls = new Set((nextStation.hints ?? []).map((hint) => hint.imageUrl).filter(Boolean))
+  ;(existingStation.hints ?? []).forEach((hint) => {
+    if (hint?.imageUrl?.startsWith('/uploads/') && !nextHintUrls.has(hint.imageUrl)) {
+      const filePath = path.join(uploadsDir, hint.imageUrl.replace('/uploads/', ''))
+      fs.rm(filePath, { force: true }, () => {})
+    }
+  })
+}
+
+function migrateStationHints(hints = []) {
+  return (Array.isArray(hints) ? hints : []).map((hint) => {
+    if (typeof hint?.imageUrl !== 'string' || !hint.imageUrl.startsWith('data:image/')) {
+      return hint
+    }
+
+    const persistedAsset = persistDataUrlImage(hint.imageUrl, hint.imageName || `hint-${hint.id}`)
+    return {
+      ...hint,
+      imageName: hint.imageName || persistedAsset.originalname,
+      imageUrl: persistedAsset.url,
+    }
+  })
+}
+
+function persistDataUrlImage(dataUrl, baseName = 'image') {
+  const match = String(dataUrl).match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/)
+
+  if (!match) {
+    throw createHttpError(400, 'Ungueltiges eingebettetes Bild.')
+  }
+
+  const extension = getExtensionForMimeType(match[1])
+  const filename = `${crypto.randomUUID()}.${extension}`
+  const filePath = path.join(uploadsDir, filename)
+  fs.writeFileSync(filePath, Buffer.from(match[2], 'base64'))
+
+  return {
+    url: `/uploads/${filename}`,
+    originalname: `${baseName}.${extension}`,
+  }
+}
+
+function getExtensionForMimeType(mimeType) {
+  switch (mimeType) {
+    case 'image/png':
+      return 'png'
+    case 'image/webp':
+      return 'webp'
+    case 'image/gif':
+      return 'gif'
+    default:
+      return 'jpg'
+  }
 }
 
 function getStationPoints(state, stationId) {

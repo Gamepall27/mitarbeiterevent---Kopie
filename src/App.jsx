@@ -17,6 +17,7 @@ import { getEventTimerState, getTeamMetrics } from './utils/eventModel'
 
 const UI_STORAGE_KEY = 'mitarbeiterevent-ui-v2'
 const EMPTY_LIST = []
+const IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
 
 function loadStoredUiState() {
   try {
@@ -30,6 +31,40 @@ function loadStoredUiState() {
   } catch {
     return {}
   }
+}
+
+async function compressImageFile(file, options = {}) {
+  if (!(file instanceof File) || !IMAGE_MIME_TYPES.has(file.type)) {
+    return file
+  }
+
+  const { maxWidth = 1600, maxHeight = 1600, quality = 0.78 } = options
+  const imageBitmap = await createImageBitmap(file)
+  const scale = Math.min(maxWidth / imageBitmap.width, maxHeight / imageBitmap.height, 1)
+  const width = Math.max(1, Math.round(imageBitmap.width * scale))
+  const height = Math.max(1, Math.round(imageBitmap.height * scale))
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const context = canvas.getContext('2d')
+
+  if (!context) {
+    return file
+  }
+
+  context.drawImage(imageBitmap, 0, 0, width, height)
+
+  const blob = await new Promise((resolve) => {
+    canvas.toBlob(resolve, 'image/jpeg', quality)
+  })
+
+  imageBitmap.close()
+
+  if (!blob || blob.size >= file.size) {
+    return file
+  }
+
+  return new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' })
 }
 
 function App() {
@@ -330,21 +365,26 @@ function App() {
   }
 
   function handleStationSubmit(teamId, stationId, payload) {
-    const formData = new FormData()
-    formData.set('answer', payload.answer ?? '')
+    applyMutation(async () => {
+      const formData = new FormData()
+      formData.set('answer', payload.answer ?? '')
 
-    if (payload.file) {
-      formData.set('file', payload.file)
-    }
+      if (payload.file) {
+        const optimizedFile = await compressImageFile(payload.file, {
+          maxWidth: 1600,
+          maxHeight: 1600,
+          quality: 0.75,
+        })
+        formData.set('file', optimizedFile)
+      }
 
-    applyMutation(() =>
-      postMultipart(
+      return postMultipart(
         `/api/team/${teamId}/stations/${stationId}/submit`,
         formData,
         undefined,
         getActiveTeamSession(),
-      ),
-    )
+      )
+    })
   }
 
   function handleStationUnlock(teamId, stationId, code) {
@@ -462,41 +502,72 @@ function App() {
     })
   }
 
-  function buildStationFormData(payload) {
+  async function buildStationFormData(payload) {
     const formData = new FormData()
+    const normalizedHints = []
 
-    Object.entries(payload).forEach(([key, value]) => {
+    for (const [key, value] of Object.entries(payload)) {
       if (key === 'id' || key === 'existingImageName' || key === 'existingImageUrl') {
-        return
+        continue
       }
 
       if (value === undefined || value === null || value === '') {
-        return
+        continue
       }
 
       if (key === 'stationImage' && value instanceof File) {
-        formData.set(key, value)
-        return
+        const optimizedFile = await compressImageFile(value, {
+          maxWidth: 1800,
+          maxHeight: 1800,
+          quality: 0.8,
+        })
+        formData.set(key, optimizedFile)
+        continue
       }
 
       if (key === 'hints' && Array.isArray(value)) {
-        formData.set(key, JSON.stringify(value))
-        return
+        for (const hint of value) {
+          const normalizedHint = {
+            id: hint.id,
+            content: hint.content,
+            cost: hint.cost,
+            imageUrl: hint.imageUrl ?? '',
+            imageName: hint.imageName ?? '',
+          }
+
+          if (hint.imageFile instanceof File) {
+            const optimizedHintFile = await compressImageFile(hint.imageFile, {
+              maxWidth: 1400,
+              maxHeight: 1400,
+              quality: 0.76,
+            })
+            formData.append('hintImages', optimizedHintFile, `${hint.id}__${optimizedHintFile.name}`)
+            normalizedHint.imageName = optimizedHintFile.name
+          }
+
+          normalizedHints.push(normalizedHint)
+        }
+
+        formData.set(key, JSON.stringify(normalizedHints))
+        continue
       }
 
       if (key === 'choiceOptions' && Array.isArray(value)) {
         formData.set(key, JSON.stringify(value))
-        return
+        continue
       }
 
       formData.set(key, String(value))
-    })
+    }
 
     return formData
   }
 
   function handleCreateStation(payload) {
-    if (!(payload.stationImage instanceof File)) {
+    const hasHintFiles = Array.isArray(payload.hints)
+      && payload.hints.some((hint) => hint.imageFile instanceof File)
+
+    if (!(payload.stationImage instanceof File) && !hasHintFiles) {
       const {
         stationImage: _ignored,
         id: _id,
@@ -508,13 +579,17 @@ function App() {
       return
     }
 
-    const formData = buildStationFormData(payload)
-
-    applyMutation(() => postMultipart('/api/admin/stations', formData, requireAdminCode()))
+    applyMutation(async () => {
+      const formData = await buildStationFormData(payload)
+      return postMultipart('/api/admin/stations', formData, requireAdminCode())
+    })
   }
 
   function handleUpdateStation(stationId, payload) {
-    if (!(payload.stationImage instanceof File)) {
+    const hasHintFiles = Array.isArray(payload.hints)
+      && payload.hints.some((hint) => hint.imageFile instanceof File)
+
+    if (!(payload.stationImage instanceof File) && !hasHintFiles) {
       const {
         stationImage: _ignored,
         id: _id,
@@ -528,11 +603,10 @@ function App() {
       return
     }
 
-    const formData = buildStationFormData(payload)
-
-    applyMutation(() =>
-      postMultipart(`/api/admin/stations/${stationId}`, formData, requireAdminCode()),
-    )
+    applyMutation(async () => {
+      const formData = await buildStationFormData(payload)
+      return postMultipart(`/api/admin/stations/${stationId}`, formData, requireAdminCode())
+    })
   }
 
   function handleDeleteStation(stationId) {

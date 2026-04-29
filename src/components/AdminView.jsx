@@ -66,7 +66,12 @@ function createStationDraftFromStation(station) {
         : '',
     stationImage: null,
     unlockCode: station.unlockCode ?? '',
-    hints: Array.isArray(station.hints) ? station.hints : [],
+    hints: Array.isArray(station.hints)
+      ? station.hints.map((hint) => ({
+          ...hint,
+          imageFile: null,
+        }))
+      : [],
     existingImageName: station.imageName ?? '',
     existingImageUrl: station.imageUrl ?? '',
   }
@@ -801,6 +806,7 @@ function AdminView({
                           <strong>Hinweis Stufe {index + 1}</strong>
                           <p className="hint-text">{hint.content}</p>
                           <p className="hint-text">{hint.cost} Punkte</p>
+                          {hint.imageName ? <p className="hint-text">Bild: {hint.imageName}</p> : null}
                         </div>
                         <button
                           className="ghost-button danger-button"
@@ -864,24 +870,22 @@ function AdminView({
                     }
 
                     if (hintImageDraft instanceof File) {
-                      const reader = new FileReader()
-                      reader.onload = (event) => {
-                        const newHint = {
-                          id: crypto.randomUUID?.() || Math.random().toString(36).slice(2, 11),
-                          content: trimmedHintText,
-                          imageUrl: event.target.result,
-                          cost: Number(hintCostDraft),
-                        }
-
-                        setStationDraft((current) => ({
-                          ...current,
-                          hints: [...(current.hints || []), newHint],
-                        }))
-                        setHintTextDraft('')
-                        setHintImageDraft(null)
-                        setHintCostDraft('5')
+                      const newHint = {
+                        id: crypto.randomUUID?.() || Math.random().toString(36).slice(2, 11),
+                        content: trimmedHintText,
+                        imageUrl: '',
+                        imageName: hintImageDraft.name,
+                        imageFile: hintImageDraft,
+                        cost: Number(hintCostDraft),
                       }
-                      reader.readAsDataURL(hintImageDraft)
+
+                      setStationDraft((current) => ({
+                        ...current,
+                        hints: [...(current.hints || []), newHint],
+                      }))
+                      setHintTextDraft('')
+                      setHintImageDraft(null)
+                      setHintCostDraft('5')
                       return
                     }
 
@@ -889,6 +893,8 @@ function AdminView({
                       id: crypto.randomUUID?.() || Math.random().toString(36).slice(2, 11),
                       content: trimmedHintText,
                       imageUrl: '',
+                      imageName: '',
+                      imageFile: null,
                       cost: Number(hintCostDraft),
                     }
 
